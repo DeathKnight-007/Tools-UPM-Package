@@ -1,0 +1,37 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "F:\\Project\\Tools-UPM-Package\\Tools\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{34271106-0BC5-B414-2170-B094ECCA5984}|SerializableReadWrite.csproj|f:\\project\\tools-upm-package\\tools\\assets\\scenes\\serializable_read_write\\myobjectsaveread.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{34271106-0BC5-B414-2170-B094ECCA5984}|SerializableReadWrite.csproj|solutionrelative:assets\\scenes\\serializable_read_write\\myobjectsaveread.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 0,
+          "Children": [
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "MyObjectSaveRead.cs",
+              "DocumentMoniker": "F:\\Project\\Tools-UPM-Package\\Tools\\Assets\\Scenes\\Serializable_Read_Write\\MyObjectSaveRead.cs",
+              "RelativeDocumentMoniker": "Assets\\Scenes\\Serializable_Read_Write\\MyObjectSaveRead.cs",
+              "ToolTip": "F:\\Project\\Tools-UPM-Package\\Tools\\Assets\\Scenes\\Serializable_Read_Write\\MyObjectSaveRead.cs",
+              "RelativeToolTip": "Assets\\Scenes\\Serializable_Read_Write\\MyObjectSaveRead.cs",
+              "ViewState": "AgIAAAwAAAAAAAAAAAAAABQAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-07-10T11:31:29.244Z",
+              "EditorCaption": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
