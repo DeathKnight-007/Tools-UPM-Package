@@ -60,8 +60,12 @@
     <Analyzer Include="C:\Program Files\Unity\Hub\Editor\2022.3.62f2c1\Editor\Data\Tools\Unity.SourceGenerators\Unity.Properties.SourceGenerator.dll" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Assets\Scenes\Serializable_Read_Write\MyObjectSaveRead.cs" />
-    <Compile Include="Assets\Scenes\Serializable_Read_Write\MyBigFileWriteRead.cs" />
+    <Compile Include="Assets\Scenes\Serializable_Read_Write\IVerify.cs" />
+    <Compile Include="Assets\Scenes\Serializable_Read_Write\HMACVerify.cs" />
+    <Compile Include="Assets\Scenes\Serializable_Read_Write\ObjectSaveRead.cs" />
+    <Compile Include="Assets\Scenes\Serializable_Read_Write\HashVerify.cs" />
+    <Compile Include="Assets\Scenes\Serializable_Read_Write\Test.cs" />
+    <Compile Include="Assets\Scenes\Serializable_Read_Write\TestData.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Assets\Scenes\Serializable_Read_Write\SerializableReadWrite.asmdef" />
