@@ -1,212 +1,98 @@
-using System.Collections;
-using System.Collections.Generic;
 using System.IO;
-using System.Security.Cryptography;
 using System.Text;
-using UnityEngine;
 using Unity.Plastic.Newtonsoft.Json;
 using JsonSerializer = Unity.Plastic.Newtonsoft.Json.JsonSerializer;
-using System;
 
 namespace SerializableReadWrite
 {
+    /// <summary>
+    /// å¯¹è±¡ä¸ JSON æ˜æ–‡å­—èŠ‚æµä¹‹é—´çš„è¯»å†™é€‚é…å™¨ã€‚
+    /// æ–‡ä»¶ã€AESã€saltã€IV å’Œ Tag ç”± ProtectedFile è´Ÿè´£ã€‚
+    /// </summary>
     public static class ObjectSaveRead
     {
-        public static void Save<T>(string path, T data, string passward = null, IVerify verify = null, string verifyPassward = null)
+        /// <summary>
+        /// ä¿å­˜æ•°æ®
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="path"></param>
+        /// <param name="data"></param>
+        /// <param name="passward">nullä»£è¡¨ä¸ä½¿ç”¨åŠ å¯†ï¼Œæœ‰å¯†ç åˆ™ä½¿ç”¨AESåŠ å¯†</param>
+        /// <param name="verify">nullä»£è¡¨ä¸ä½¿ç”¨æ ¡éªŒï¼Œéç©ºåˆ™ä½¿ç”¨æ ¡éªŒç ï¼Œé˜²æ­¢æ–‡ä»¶ç¼ºå¤±æˆ–è€…è¢«äººä¿®æ”¹</param>
+        /// <param name="verifyPassward">nullä»£è¡¨ä¸ä½¿ç”¨æ ¡éªŒå¯†ç ï¼Œéç©ºåˆ™ä½¿ç”¨æ ¡éªŒå¯†ç ï¼Œé˜²æ­¢æœ‰äººä¿®æ”¹æ ¡éªŒç </param>
+        public static void Save<T>(
+            string path,
+            T data,
+            string passward = null,
+            IVerify verify = null,
+            string verifyPassward = null)
         {
-            // 1¡¢Ğ´ÈëÄÚ´æÕ¼ÓÃÒÔ¼°Ğ§ÂÊ
-            // 2¡¢Òì²½Ğ´Èë
-            // 3¡¢Á÷Ê½¼ÓÃÜ
-
-            // ¼ÓÃÜ
-            Aes aes = null;
-            byte[] salt = null;
-            if (passward != null)
-            {
-                 aes = GetAes(passward, out salt);
-            }
-
-            try
-            {
-                using (FileStream fs = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 1024 * 64, false))
+            // 1ã€å†™å…¥å†…å­˜å ç”¨ä»¥åŠæ•ˆç‡
+            // 2ã€å¼‚æ­¥å†™å…¥
+            // 3ã€æµå¼åŠ å¯†
+            ProtectedFile.Write(
+                path,
+                plaintextStream =>
                 {
-                    // fs.SetLength(100);  ÌáÇ°ÉèÖÃÎÄ¼ş´óĞ¡£¬ºÃÈÃ²Ù×÷ÏµÍ³ºÍÓ²ÅÌ·ÖÅä¿Õ¼ä£¬ÖÂÊ¹ÎÄ¼ş²»ËéÆ¬»¯ÑÏÖØ
-
-                    // fs.Position = 0; fs.Seek(0, SeekOrigin.Begin); Ğ§¹ûÒ»Ñù¶¼ÊÇÒÆ¶¯ÎÄ¼şÖ¸Õë£¬readºÍwriteÊ±£¬Ö¸Õë×Ô¶¯ÒÆ¶¯
-
-                    // FileMode.OpenOrCreate ÉèÖÃ¶ÁĞ´Ä£Ê½
-                    // FileMode.OpenOrCreate¡¢FileMode.Open ¶¼ÊÇ´ò¿ªÎÄ¼ş£¬È»ºóÎÄ¼şÖ¸ÕëÉèÖÃÔÚÎÄ¼ş¿ªÍ·£¬µ«ÊÇ±£ÁôÁËÔ­±¾ÎÄ¼şÄÚÈİ
-                    // FileMode.Create ´ò¿ªÎÄ¼ş£¬Çå¿ÕÔ­ÓĞÎÄ±¾ÄÚÈİ£¬²¢ÇÒÎÄ¼şÖ¸ÕëÔÚ¿ªÍ·
-                    // FileMode.CreateNew Ò»°ãÓÃ²»µ½£¬Èç¹ûÎÄ¼ş´æÔÚ£¬¾Í»á±¨´í£¬Ëü±ØĞëÊÇ´´½¨ĞÂÎÄ¼ş
-
-                    //FileAccess.Write, FileShare.None ÉèÖÃ»ñÈ¡×ÊÔ´È¨ÏŞ, ºóÕß±íÊ¾·ÖÏí³öÈ¥µÄÈ¨ÏŞ£¬Ç°Õß±íÊ¾×Ô¼º»ñµÃµÄÈ¨ÏŞ
-
-                    //buffSize 1024 * 64, Ğ´»º´æ£¬ÌîÂú»º´æ£¬»òÕßfs.Flush¡¢fs.closeÊ±£¬µ÷ÓÃioĞ´Èë£¬µ«ÊÇioÒ²»á»º´æºóÔÙÕæÕıÖ´ĞĞĞ´ÅÌ²Ù×÷¡£Èç¹ûÒ»´Îµ÷ÓÃµÄĞ´ÈëÊı¾İÖ±½Ó³¬¹ı»º´æ£¬ÔòÖ±½Ó²»»º´æÁË£¬Ö±½ÓĞ´Èë
-
-                    int dataOffset = 0; // ÃÜÎÄ¿ªÊ¼µÄÎ»ÖÃ
-                    if (verify != null) // Ğ£ÑéÊı¾İĞ´ÔÚÎÄ¼ş×î¿ªÍ·
+                    using (StreamWriter sw = new StreamWriter(
+                        plaintextStream,
+                        new UTF8Encoding(false),
+                        1024 * 16,
+                        true))
+                    using (JsonTextWriter jw = new JsonTextWriter(sw))
                     {
-                        fs.Position = verify.TagLength; //ÏÈ°ÑĞ£ÑéÊı¾İÎ»ÖÃ¿Õ³öÀ´
-                        dataOffset += verify.TagLength;
+                        // åº•å±‚æ˜æ–‡æµå±äº ProtectedFileï¼ŒJSON å±‚åªèƒ½åˆ·æ–°ï¼Œä¸èƒ½å…³é—­å®ƒã€‚
+                        jw.CloseOutput = false;
+
+                        JsonSerializer serializer = new JsonSerializer();
+                        serializer.Serialize(jw, data);
+
+                        jw.Flush();
+                        sw.Flush();
                     }
-                    if (aes != null)
-                    {
-                        fs.Write(salt, 0, salt.Length);
-                        fs.Write(aes.IV, 0, aes.IV.Length);
-                        dataOffset += salt.Length;
-                        dataOffset += aes.IV.Length;
-                        using (CryptoStream cryptoStream = new CryptoStream(fs, aes.CreateEncryptor(), CryptoStreamMode.Write, true))
-                        {
-                            using (StreamWriter sw = new StreamWriter(cryptoStream, Encoding.UTF8, 1024 * 16, true))
-                            {
-                                using (JsonTextWriter jw = new JsonTextWriter(sw))
-                                {
-                                    JsonSerializer serializer = new JsonSerializer();
-                                    serializer.Serialize(jw, data);
-                                }
-                            }
-                        }
-                    }
-                    else
-                    {
-                        using (StreamWriter sw = new StreamWriter(fs, Encoding.UTF8, 1024 * 16, true))
-                        {
-                            using (JsonTextWriter jw = new JsonTextWriter(sw))
-                            {
-                                JsonSerializer serializer = new JsonSerializer();
-                                serializer.Serialize(jw, data);
-                            }
-                        }
-                    }
-                    //Ìí¼ÓĞ£Ñétag
-                    if (verify != null)
-                    {
-                        fs.Seek(dataOffset, SeekOrigin.Begin); // Ö»¶ÔÃÜÎÄĞ£Ñé
-                        byte[] tag = verify.ComputeTag(fs, verifyPassward == null ? null : Encoding.UTF8.GetBytes(verifyPassward));
-                        fs.Position = 0;
-                        fs.Write(tag, 0, tag.Length);
-                    }
-                }
-            }
-            finally
-            {
-                if (aes != null)
-                {
-                    aes.Dispose();
-                }
-            }
+                },
+                CreateOptions(passward, verify, verifyPassward));
         }
 
-
-        private static Aes GetAes(string passward, out byte[] salt)
+        public static T Read<T>(
+            string path,
+            string passward = null,
+            IVerify verify = null,
+            string verifyPassward = null)
         {
-            //Ê¹ÓÃAES¼ÓÃÜ
-            Aes aes = Aes.Create();//
+            return ProtectedFile.Read(
+                path,
+                plaintextStream =>
+                {
+                    using (StreamReader sr = new StreamReader(
+                        plaintextStream,
+                        Encoding.UTF8,
+                        false,
+                        1024 * 16,
+                        true))
+                    using (JsonTextReader jr = new JsonTextReader(sr))
+                    {
+                        // åº•å±‚æ˜æ–‡æµå±äº ProtectedFileï¼ŒJSON å±‚ä¸èƒ½å…³é—­å®ƒã€‚
+                        jr.CloseInput = false;
 
-            aes.GenerateIV(); // aes.IV,¿ÉÒÔ×Ô¶¯Éú³É£¬Ò²¿ÉÒÔ×Ô¼ºÉú³É£¬µ«ÊÇÃ»±ØÒª×Ô¼ºÉú³É
-                              // ÃÜÎÄ³õÊ¼»¯ÏòÁ¿£¬±£´æÔÚ¼ÓÃÜºóµÄÎÄ¼ş¿ªÍ·£¬±£Ö¤Êı¾İÏàÍ¬£¬ÃÜÂëÏàÍ¬µ«ÊÇ¼ÓÃÜ½á¹û²»Í¬
-            byte[] iv = aes.IV; // ³¤¶ÈÊÇ16
-
-            salt = new byte[16]; // Ò»°ãÊÇ16»òÕß32£¬ saltµÄÄ¿µÄÊÇ 1¡¢Ëæ»úÊ¹Ã¿¸öÎÄ¼şÕæÕıµÄÃÜÂë²»Í¬ 2¡¢Í¨¹ısalt+passward¼ÆËãÕæÕıµÄkey£¬¼ÆËãÁ¿Ôö´ó
-                                        // ArrayPool<byte>.Shared.Rent() ĞèÒª³Ø»¯Ìõ¼ş£¬1¡¢64kbÒÔÉÏ(85kbÊÇÍĞ¹ÜÅĞ¶Ï´óÎÄ¼şãĞÖµ)  2¡¢¸ßÆµ´´½¨  ËùÒÔÕâ¸ösaltÖ±½Ó´´½¨°É£¬·´ÕıÒ²ºÃ»ØÊÕ
-            using (var rng = RandomNumberGenerator.Create())
-            {
-                rng.GetBytes(salt);
-            }
-            aes.Key = DeriveKey(passward, salt); // ÃÜÂë, ³¤¶È¹Ì¶¨32£¬ ÈÃÓÃ»§¶ÌÃÜÂëÒ²ÄÜÉú³É32×Ö½ÚÃÜÂë
-                                                  //aes.GenerateKey();  ÃÜÂëÒ²¿ÉÒÔ×Ô¶¯Éú³É
-            return aes;
+                        JsonSerializer serializer = new JsonSerializer();
+                        return serializer.Deserialize<T>(jr);
+                    }
+                },
+                CreateOptions(passward, verify, verifyPassward));
         }
 
-        private static byte[] DeriveKey(string password, byte[] salt)
+        private static ProtectedFileOptions CreateOptions(
+            string passward,
+            IVerify verify,
+            string verifyPassward)
         {
-            using var derive = new Rfc2898DeriveBytes(
-                password,
-                salt,
-                100000
-            );
-            return derive.GetBytes(32); // 32×Ö½Ú£¬AES-256
-        }
-
-        public static T Read<T>(string path, string passward = null, IVerify verify = null, string verifyPassward = null)
-        {
-            using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 64))
+            return new ProtectedFileOptions
             {
-                //Ğ£Ñétag
-                if (verify != null)
-                {
-                    int dataOffset = 0;
-                    dataOffset += verify.TagLength;
-                    if(passward != null)
-                    {
-                        dataOffset += 32; // aes¼ÓÃÜµÄsalt+iv
-                    }
-                    byte[] tag = new byte[verify.TagLength];
-                    ReadExactly(fs, tag, 0, verify.TagLength);// ¶ÁÈ¡³öĞ£ÑéÂë
-                    fs.Seek(dataOffset, SeekOrigin.Begin);
-                    if(!verify.VerifyTag(fs, tag, verifyPassward == null ? null : Encoding.UTF8.GetBytes(verifyPassward)))
-                    {
-                        Exception e = new Exception("ÎÄ¼şÍêÕû¼°Çå°×Ğ£Ñé²»Í¨¹ı");
-                        throw e;
-                    }
-                    fs.Seek(verify.TagLength, SeekOrigin.Begin); // Ö¸ÕëÒÆ¶¯µ½Ğ£ÑéÂëÄ©Î²
-                }
-
-                if (passward != null)
-                {
-                    using Aes aes = Aes.Create();
-                    byte[] salt = new byte[16];
-                    ReadExactly(fs, salt, 0, 16);
-                    byte[] iv = new byte[16];
-                    ReadExactly(fs, iv, 0, 16);
-                    aes.IV = iv;
-                    aes.Key = DeriveKey(passward, salt);
-                    
-
-                    using (CryptoStream cryptoStream = new CryptoStream(fs, aes.CreateDecryptor(), CryptoStreamMode.Read))
-                    {
-                        using (StreamReader sr = new StreamReader(cryptoStream, Encoding.UTF8, false, 1024 * 16))
-                        {
-                            using (JsonTextReader jr = new JsonTextReader(sr))
-                            {
-                                JsonSerializer serializer = new JsonSerializer();
-                                return serializer.Deserialize<T>(jr);
-                            }
-                        }
-                    }
-                }
-                else
-                {
-                    using (StreamReader sr = new StreamReader(fs, Encoding.UTF8, false,1024 * 16))
-                    {
-                        using (JsonTextReader jr = new JsonTextReader(sr))
-                        {
-                            JsonSerializer serializer = new JsonSerializer();
-                            return serializer.Deserialize<T>(jr);
-                        }
-                    }
-                }
-            }
-        }
-        private static void ReadExactly(
-            Stream stream,
-            byte[] buffer,
-            int offset,
-            int count)
-        {
-            while (count > 0)
-            {
-                int readCount = stream.Read(
-                    buffer,
-                    offset,
-                    count);
-
-                if (readCount == 0)
-                    throw new EndOfStreamException("ÎÄ¼şÌáÇ°½áÊø");
-
-                offset += readCount;
-                count -= readCount;
-            }
+                EncryptionPassword = passward,
+                Verify = verify,
+                VerifyKey = verifyPassward
+            };
         }
     }
 }

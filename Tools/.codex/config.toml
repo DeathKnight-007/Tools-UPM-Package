@@ -1,0 +1,5 @@
+[mcp_servers.mcp-unity]
+command = "node"
+args = ["Library/McpUnityServer/Server~/build/index.js"]
+startup_timeout_sec = 30
+
