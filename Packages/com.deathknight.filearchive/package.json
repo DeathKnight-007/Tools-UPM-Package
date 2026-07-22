@@ -1,0 +1,23 @@
+{
+  "name": "com.deathknight.filearchive",
+  "version": "0.1.0",
+  "displayName": "File Archive",
+  "description": "ZIP compression and safe extraction utilities with progress reporting.",
+  "unity": "2022.3",
+  "keywords": [
+    "zip",
+    "archive",
+    "compression",
+    "file"
+  ],
+  "author": {
+    "name": "DeathKnight-007"
+  },
+  "samples": [
+    {
+      "displayName": "Basic Usage",
+      "description": "Compress and extract a directory.",
+      "path": "Samples~/BasicUsage"
+    }
+  ]
+}

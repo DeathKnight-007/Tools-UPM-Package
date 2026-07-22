@@ -1,0 +1,26 @@
+{
+  "name": "com.deathknight.serializablereadwrite",
+  "version": "0.1.0",
+  "displayName": "Serializable Read Write",
+  "description": "Stream-based serialization, integrity verification, encryption, and protected AssetBundle loading utilities.",
+  "unity": "2022.3",
+  "dependencies": {
+    "com.unity.nuget.newtonsoft-json": "3.2.1"
+  },
+  "keywords": [
+    "serialization",
+    "encryption",
+    "file",
+    "assetbundle"
+  ],
+  "author": {
+    "name": "DeathKnight-007"
+  },
+  "samples": [
+    {
+      "displayName": "Basic Usage",
+      "description": "Save and load a protected JSON file.",
+      "path": "Samples~/BasicUsage"
+    }
+  ]
+}

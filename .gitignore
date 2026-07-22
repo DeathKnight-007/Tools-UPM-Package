@@ -1,6 +1,13 @@
-﻿Tools/Library
-Tools/Logs
-Tools/obj
-Tools/Temp
-Tools/.vs
-Tools/.vs
+# Unity development project caches
+Tools/Library/
+Tools/Logs/
+Tools/obj/
+Tools/Temp/
+Tools/.vs/
+Tools/UserSettings/
+
+# Unity-generated IDE files
+Tools/*.csproj
+Tools/*.csproj.user
+Tools/*.sln
+Tools/*.suo

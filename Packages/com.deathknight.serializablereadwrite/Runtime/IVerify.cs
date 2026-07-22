@@ -1,20 +1,16 @@
-using System.Collections;
-using System.Collections.Generic;
 using System.IO;
-using System.Security.Cryptography;
-using UnityEngine;
 
 namespace SerializableReadWrite
 {
     /// <summary>
-    /// ÑéÖ¤ÎÄ¼şÍêÕûĞÔ£¬ÒÔ¼°ÎŞĞŞ¸Ä
+    /// éªŒè¯æ–‡ä»¶å®Œæ•´æ€§ï¼Œä»¥åŠæ— ä¿®æ”¹
     /// </summary>
     public interface IVerify 
     {
         int TagLength { get; }
         /// <summary>
-        /// ¼ÆËãĞ£ÑéÂë£¬Ò»°ã½«Ğ£ÑéÂë·Åµ½Êı¾İ×îºó¡£
-        /// Õâ¸öĞ£ÑéÂëÊµ¼ÊÉÏÊÇÒ»¸öÖµ¡£ÕûÌå¾ÍÊÇÎŞ¾¡µÄÄÚÈİ£¬Ó³Éäµ½256bit´óµÄÖµÇø¼äÉÏ¡£
+        /// è®¡ç®—æ ¡éªŒç ï¼Œä¸€èˆ¬å°†æ ¡éªŒç æ”¾åˆ°æ•°æ®æœ€åã€‚
+        /// è¿™ä¸ªæ ¡éªŒç å®é™…ä¸Šæ˜¯ä¸€ä¸ªå€¼ã€‚æ•´ä½“å°±æ˜¯æ— å°½çš„å†…å®¹ï¼Œæ˜ å°„åˆ°256bitå¤§çš„å€¼åŒºé—´ä¸Šã€‚
         /// </summary>
         /// <param name="data"></param>
         /// <param name="passward"></param>
@@ -24,7 +20,7 @@ namespace SerializableReadWrite
         bool VerifyTag(byte[] data, byte[] tag, byte[] passward = null);
 
         /// <summary>
-        /// Êı¾İĞ£ÑéÂë¼ÆËã£¬¸ÄÎªÁ÷Ê½¼ÆËã·½Ê½
+        /// æ•°æ®æ ¡éªŒç è®¡ç®—ï¼Œæ”¹ä¸ºæµå¼è®¡ç®—æ–¹å¼
         /// </summary>
         /// <param name="data"></param>
         /// <param name="passward"></param>

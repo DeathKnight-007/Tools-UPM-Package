@@ -1,8 +1,5 @@
-using System.Collections;
-using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
-using UnityEngine;
 
 namespace SerializableReadWrite
 {
@@ -17,7 +14,7 @@ namespace SerializableReadWrite
         }
 
         /// <summary>
-        /// ¹şÏ£¼ÆËã½á¹ûÏà¹ØÒòËØ£¬ 1¡¢ÎÄ¼şÄÚÈİ 2¡¢ÃÜÂë¡£ ĞŞ¸ÄÕß²»ÖªµÀÃÜÂë£¬¾Í²»ÄÜĞŞ¸ÄÎÄ¼şºóÖØĞÂ¼ÆËã¹şÏ£Öµ£¬´Ó¶øÈÆ¹ı¼ì²é
+        /// å“ˆå¸Œè®¡ç®—ç»“æœç›¸å…³å› ç´ ï¼Œ 1ã€æ–‡ä»¶å†…å®¹ 2ã€å¯†ç ã€‚ ä¿®æ”¹è€…ä¸çŸ¥é“å¯†ç ï¼Œå°±ä¸èƒ½ä¿®æ”¹æ–‡ä»¶åé‡æ–°è®¡ç®—å“ˆå¸Œå€¼ï¼Œä»è€Œç»•è¿‡æ£€æŸ¥
         /// </summary>
         /// <param name="data"></param>
         /// <param name="passward"></param>
@@ -35,7 +32,7 @@ namespace SerializableReadWrite
             using (HMACSHA256 hmac = new HMACSHA256(passward))
             {
                 byte[] dataTag = hmac.ComputeHash(data);
-                return CryptographicOperations.FixedTimeEquals(dataTag, tag); // ÆÕÍ¨¶Ô±ÈÊÇ°´Ë³Ğò¶Ô±È£¬Õâ¸öÊÇ°´Ëæ»úË³Ğò¶Ô±È£¬·ÀÖ¹ÆÆ½âÕßÍ¨¹ıºÄÊ±²Â²â³öÃÜÂë
+                return CryptographicOperations.FixedTimeEquals(dataTag, tag); // æ™®é€šå¯¹æ¯”æ˜¯æŒ‰é¡ºåºå¯¹æ¯”ï¼Œè¿™ä¸ªæ˜¯æŒ‰éšæœºé¡ºåºå¯¹æ¯”ï¼Œé˜²æ­¢ç ´è§£è€…é€šè¿‡è€—æ—¶çŒœæµ‹å‡ºå¯†ç 
             }
         }
 

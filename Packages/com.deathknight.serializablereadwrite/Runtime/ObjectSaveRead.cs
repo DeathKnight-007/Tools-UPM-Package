@@ -1,7 +1,6 @@
 using System.IO;
 using System.Text;
-using Unity.Plastic.Newtonsoft.Json;
-using JsonSerializer = Unity.Plastic.Newtonsoft.Json.JsonSerializer;
+using Newtonsoft.Json;
 
 namespace SerializableReadWrite
 {
