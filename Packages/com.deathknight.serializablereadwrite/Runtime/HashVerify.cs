@@ -13,9 +13,6 @@ namespace SerializableReadWrite
 
         public byte[] ComputeTag(byte[] data, byte[] passward = null)
         {
-            if (data == null)
-                throw new ArgumentNullException(nameof(data));
-
             using (SHA256 sha256 = SHA256.Create())
             {
                 return sha256.ComputeHash(data);
@@ -24,9 +21,6 @@ namespace SerializableReadWrite
 
         public byte[] ComputeTag(Stream data, byte[] passward = null)
         {
-            if (data == null)
-                throw new ArgumentNullException(nameof(data));
-
             using (SHA256 sha256 = SHA256.Create())
             {
                 // ComputeHash 从流的当前位置开始计算到流末尾。

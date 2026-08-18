@@ -19,7 +19,6 @@ namespace SerializableReadWrite
             string protectedPath,
             string passward,
             IVerify verify,
-            string verifyPassward,
             uint crc)
         {
             var completionSource = new TaskCompletionSource<AssetBundle>();
@@ -30,7 +29,6 @@ namespace SerializableReadWrite
                 protectedPath,
                 passward,
                 verify,
-                verifyPassward,
                 crc));
 
             return completionSource.Task;
@@ -41,15 +39,13 @@ namespace SerializableReadWrite
             string protectedPath,
             string passward,
             IVerify verify,
-            string verifyPassward,
             uint crc)
         {
             // 工作线程中只执行纯 C# 的文件读取、校验和解密，不调用 Unity API。
             Task<byte[]> decryptTask = Task.Run(() => FileEncrypt.DecryptToBytes(
                 protectedPath,
                 passward,
-                verify,
-                verifyPassward));
+                verify));
 
             while (!decryptTask.IsCompleted)
                 yield return null;

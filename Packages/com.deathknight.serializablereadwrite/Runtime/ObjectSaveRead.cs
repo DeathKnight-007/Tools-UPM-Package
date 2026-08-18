@@ -18,13 +18,11 @@ namespace SerializableReadWrite
         /// <param name="data"></param>
         /// <param name="passward">null代表不使用加密，有密码则使用AES加密</param>
         /// <param name="verify">null代表不使用校验，非空则使用校验码，防止文件缺失或者被人修改</param>
-        /// <param name="verifyPassward">null代表不使用校验密码，非空则使用校验密码，防止有人修改校验码</param>
         public static void Save<T>(
             string path,
             T data,
             string passward = null,
-            IVerify verify = null,
-            string verifyPassward = null)
+            IVerify verify = null)
         {
             // 1、写入内存占用以及效率
             // 2、异步写入
@@ -50,14 +48,13 @@ namespace SerializableReadWrite
                         sw.Flush();
                     }
                 },
-                CreateOptions(passward, verify, verifyPassward));
+                CreateOptions(passward, verify));
         }
 
         public static T Read<T>(
             string path,
             string passward = null,
-            IVerify verify = null,
-            string verifyPassward = null)
+            IVerify verify = null)
         {
             return ProtectedFile.Read(
                 path,
@@ -78,19 +75,17 @@ namespace SerializableReadWrite
                         return serializer.Deserialize<T>(jr);
                     }
                 },
-                CreateOptions(passward, verify, verifyPassward));
+                CreateOptions(passward, verify));
         }
 
         private static ProtectedFileOptions CreateOptions(
             string passward,
-            IVerify verify,
-            string verifyPassward)
+            IVerify verify)
         {
             return new ProtectedFileOptions
             {
                 EncryptionPassword = passward,
-                Verify = verify,
-                VerifyKey = verifyPassward
+                Verify = verify
             };
         }
     }

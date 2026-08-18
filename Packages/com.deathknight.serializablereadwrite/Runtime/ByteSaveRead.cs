@@ -12,8 +12,7 @@ namespace SerializableReadWrite
             string path,
             byte[] data,
             string passward = null,
-            IVerify verify = null,
-            string verifyPassward = null)
+            IVerify verify = null)
         {
             if (data == null)
                 throw new ArgumentNullException(nameof(data));
@@ -21,14 +20,13 @@ namespace SerializableReadWrite
             ProtectedFile.Write(
                 path,
                 plaintextStream => plaintextStream.Write(data, 0, data.Length),
-                CreateOptions(passward, verify, verifyPassward));
+                CreateOptions(passward, verify));
         }
 
         public static byte[] Read(
             string path,
             string passward = null,
-            IVerify verify = null,
-            string verifyPassward = null)
+            IVerify verify = null)
         {
             return ProtectedFile.Read(
                 path,
@@ -38,19 +36,17 @@ namespace SerializableReadWrite
                     plaintextStream.CopyTo(memoryStream);
                     return memoryStream.ToArray();
                 },
-                CreateOptions(passward, verify, verifyPassward));
+                CreateOptions(passward, verify));
         }
 
         private static ProtectedFileOptions CreateOptions(
             string passward,
-            IVerify verify,
-            string verifyPassward)
+            IVerify verify)
         {
             return new ProtectedFileOptions
             {
                 EncryptionPassword = passward,
-                Verify = verify,
-                VerifyKey = verifyPassward
+                Verify = verify
             };
         }
     }

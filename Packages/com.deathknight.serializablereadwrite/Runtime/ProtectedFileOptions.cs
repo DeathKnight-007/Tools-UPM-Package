@@ -15,9 +15,5 @@ namespace SerializableReadWrite
         /// </summary>
         public IVerify Verify { get; set; }
 
-        /// <summary>
-        /// 校验算法使用的密钥。HashVerify 会忽略它，HMACVerify 需要它。
-        /// </summary>
-        public string VerifyKey { get; set; }
     }
 }

@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Security.Cryptography;
-using System.Text;
 
 namespace SerializableReadWrite
 {
@@ -9,7 +8,8 @@ namespace SerializableReadWrite
     /// 负责明文字节流与受保护文件之间的转换。
     /// 不关心上层写入的是 JSON、图片还是其他二进制数据。
     /// 文件布局为：[Tag][salt][IV][data]，不存在的可选部分不写入。
-    /// 当前校验范围只包含 data；启用 AES 时，data 是密文。
+    /// 启用 AES 时，PBKDF2 从同一个密码派生独立的 AES Key 和 HMAC Key。
+    /// 校验范围包含 salt、IV 和 data；启用 AES 时，data 是密文。
     /// </summary>
     public static class ProtectedFile
     {
@@ -34,6 +34,7 @@ namespace SerializableReadWrite
                 throw new ArgumentNullException(nameof(writePlaintext));
 
             options ??= new ProtectedFileOptions();
+            ValidateOptions(options);
 
             if (progress != null && plaintextLength < 0)
             {
@@ -50,11 +51,15 @@ namespace SerializableReadWrite
 
             Aes aes = null;
             byte[] salt = null;
+            byte[] verifyKey = null;
 
             // 加密
             if (options.EncryptionPassword != null)
             {
-                aes = GetAes(options.EncryptionPassword, out salt);
+                aes = GetAes(
+                    options.EncryptionPassword,
+                    out salt,
+                    out verifyKey);
             }
 
             try
@@ -81,7 +86,7 @@ namespace SerializableReadWrite
                     // bufferSize 1024 * 64：写缓存填满，或者 fs.Flush、fs.Close 时调用 IO 写入；
                     // 但是 IO 也会缓存后再真正执行写盘操作。如果一次写入直接超过缓存，通常会绕过该缓存直接写入。
 
-                    long dataOffset = 0; // 数据开始的位置；启用 AES 时，这里也是密文开始的位置
+                    long authenticatedDataOffset = 0;
 
                     if (options.Verify != null) // 校验数据写在文件最开头
                     {
@@ -89,7 +94,7 @@ namespace SerializableReadWrite
                             throw new InvalidOperationException("校验码长度必须大于0");
 
                         fs.Position = options.Verify.TagLength; // 先把校验数据位置空出来
-                        dataOffset += options.Verify.TagLength;
+                        authenticatedDataOffset = options.Verify.TagLength;
                     }
 
                     if (aes != null)
@@ -98,9 +103,6 @@ namespace SerializableReadWrite
 
                         byte[] iv = aes.IV;
                         fs.Write(iv, 0, iv.Length);
-
-                        dataOffset += salt.Length;
-                        dataOffset += iv.Length;
 
                         using (CryptoStream cryptoStream = new CryptoStream(
                             fs,
@@ -134,13 +136,13 @@ namespace SerializableReadWrite
                     // 添加校验 Tag
                     if (options.Verify != null)
                     {
-                        long verifyLength = fs.Length - dataOffset;
+                        long verifyLength = fs.Length - authenticatedDataOffset;
                         progressReporter?.BeginStage(
                             FileEncryptStage.GeneratingTag,
                             verifyLength);
 
-                        fs.Seek(dataOffset, SeekOrigin.Begin); // 只对数据校验；启用 AES 时只对密文校验
-                        byte[] verifyKey = GetVerifyKey(options.VerifyKey);
+                        // 对 salt、IV 和数据整体校验，防止任何影响解密的内容被篡改。
+                        fs.Seek(authenticatedDataOffset, SeekOrigin.Begin);
                         byte[] tag;
 
                         if (progressReporter == null)
@@ -171,6 +173,7 @@ namespace SerializableReadWrite
             finally
             {
                 aes?.Dispose();
+                ClearKey(verifyKey);
             }
         }
 
@@ -190,6 +193,7 @@ namespace SerializableReadWrite
                 throw new ArgumentNullException(nameof(readPlaintext));
 
             options ??= new ProtectedFileOptions();
+            ValidateOptions(options);
 
             FileEncryptProgressReporter progressReporter = progress == null
                 ? null
@@ -204,31 +208,50 @@ namespace SerializableReadWrite
                 FileShare.Read,
                 FileBufferSize))
             {
-                long headerOffset = 0;
+                long authenticatedDataOffset = 0;
+                byte[] tag = null;
 
-                // 校验 Tag
                 if (options.Verify != null)
                 {
                     if (options.Verify.TagLength <= 0)
                         throw new InvalidOperationException("校验码长度必须大于0");
 
-                    headerOffset += options.Verify.TagLength;
+                    tag = new byte[options.Verify.TagLength];
+                    ReadExactly(fs, tag, 0, tag.Length);
+                    authenticatedDataOffset = options.Verify.TagLength;
+                }
 
-                    if (options.EncryptionPassword != null)
-                    {
-                        headerOffset += SaltLength + IvLength; // AES 加密的 salt + IV
-                    }
+                byte[] salt = null;
+                byte[] iv = null;
+                byte[] encryptionKey = null;
+                byte[] verifyKey = null;
 
-                    byte[] tag = new byte[options.Verify.TagLength];
-                    ReadExactly(fs, tag, 0, tag.Length); // 读取出校验码
+                if (options.EncryptionPassword != null)
+                {
+                    salt = new byte[SaltLength];
+                    ReadExactly(fs, salt, 0, salt.Length);
 
-                    fs.Seek(headerOffset, SeekOrigin.Begin);
+                    iv = new byte[IvLength];
+                    ReadExactly(fs, iv, 0, iv.Length);
+
+                    DeriveKeys(
+                        options.EncryptionPassword,
+                        salt,
+                        out encryptionKey,
+                        out verifyKey);
+                }
+
+                long plaintextDataOffset = fs.Position;
+
+                // 校验 Tag
+                if (options.Verify != null)
+                {
+                    fs.Seek(authenticatedDataOffset, SeekOrigin.Begin);
 
                     progressReporter?.BeginStage(
                         FileEncryptStage.VerifyingTag,
-                        fs.Length - headerOffset);
+                        fs.Length - authenticatedDataOffset);
 
-                    byte[] verifyKey = GetVerifyKey(options.VerifyKey);
                     bool verifySucceeded;
 
                     if (progressReporter == null)
@@ -254,21 +277,14 @@ namespace SerializableReadWrite
                         throw new InvalidDataException("文件完整及清白校验不通过");
                     }
 
-                    fs.Seek(options.Verify.TagLength, SeekOrigin.Begin); // 指针移动到校验码末尾
+                    fs.Seek(plaintextDataOffset, SeekOrigin.Begin);
                 }
 
                 if (options.EncryptionPassword != null)
                 {
                     using Aes aes = Aes.Create();
-
-                    byte[] salt = new byte[SaltLength];
-                    ReadExactly(fs, salt, 0, salt.Length);
-
-                    byte[] iv = new byte[IvLength];
-                    ReadExactly(fs, iv, 0, iv.Length);
-
                     aes.IV = iv;
-                    aes.Key = DeriveKey(options.EncryptionPassword, salt);
+                    aes.Key = encryptionKey;
 
                     progressReporter?.BeginStage(
                         FileEncryptStage.Decrypting,
@@ -299,6 +315,8 @@ namespace SerializableReadWrite
 
                     progressReporter?.CompleteStage();
                     progressReporter?.Complete();
+                    ClearKey(encryptionKey);
+                    ClearKey(verifyKey);
                     return result;
                 }
 
@@ -323,6 +341,7 @@ namespace SerializableReadWrite
 
                 progressReporter?.CompleteStage();
                 progressReporter?.Complete();
+                ClearKey(verifyKey);
                 return plaintextResult;
             }
         }
@@ -345,7 +364,10 @@ namespace SerializableReadWrite
             writePlaintext(progressStream);
         }
 
-        private static Aes GetAes(string passward, out byte[] salt)
+        private static Aes GetAes(
+            string passward,
+            out byte[] salt,
+            out byte[] verifyKey)
         {
             // 使用 AES 加密
             Aes aes = Aes.Create();
@@ -362,19 +384,31 @@ namespace SerializableReadWrite
                 rng.GetBytes(salt);
             }
 
-            aes.Key = DeriveKey(passward, salt); // 密码长度固定派生为32字节，让用户短密码也能生成32字节密码
-                                                  // aes.GenerateKey(); 密码也可以自动生成
+            DeriveKeys(passward, salt, out byte[] encryptionKey, out verifyKey);
+            aes.Key = encryptionKey;
+            ClearKey(encryptionKey);
             return aes;
         }
 
-        private static byte[] DeriveKey(string password, byte[] salt)
+        private static void DeriveKeys(
+            string password,
+            byte[] salt,
+            out byte[] encryptionKey,
+            out byte[] verifyKey)
         {
             using var derive = new Rfc2898DeriveBytes(
                 password,
                 salt,
-                100000);
+                100000,
+                HashAlgorithmName.SHA256);
 
-            return derive.GetBytes(32); // 32字节，AES-256
+            byte[] keyMaterial = derive.GetBytes(64);
+            encryptionKey = new byte[32];
+            verifyKey = new byte[32];
+
+            Buffer.BlockCopy(keyMaterial, 0, encryptionKey, 0, 32);
+            Buffer.BlockCopy(keyMaterial, 32, verifyKey, 0, 32);
+            ClearKey(keyMaterial);
         }
 
         private static void ReadExactly(
@@ -395,9 +429,19 @@ namespace SerializableReadWrite
             }
         }
 
-        private static byte[] GetVerifyKey(string verifyKey)
+        private static void ValidateOptions(ProtectedFileOptions options)
         {
-            return verifyKey == null ? null : Encoding.UTF8.GetBytes(verifyKey);
+            if (options.Verify is HMACVerify && options.EncryptionPassword == null)
+            {
+                throw new InvalidOperationException(
+                    "HMACVerify 必须与非空的 EncryptionPassword 一起使用，HMAC Key 会从该密码派生");
+            }
+        }
+
+        private static void ClearKey(byte[] key)
+        {
+            if (key != null)
+                Array.Clear(key, 0, key.Length);
         }
     }
 }

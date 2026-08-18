@@ -18,14 +18,12 @@ namespace SerializableReadWrite
             string protectedPath,
             string passward = null,
             IVerify verify = null,
-            string verifyPassward = null,
             uint crc = 0)
         {
             byte[] bundleBytes = FileEncrypt.DecryptToBytes(
                 protectedPath,
                 passward,
-                verify,
-                verifyPassward);
+                verify);
 
             AssetBundle assetBundle = AssetBundle.LoadFromMemory(bundleBytes, crc);
 
@@ -43,14 +41,12 @@ namespace SerializableReadWrite
             string protectedPath,
             string passward = null,
             IVerify verify = null,
-            string verifyPassward = null,
             uint crc = 0)
         {
             return EnsureRunner().LoadAsync(
                 protectedPath,
                 passward,
                 verify,
-                verifyPassward,
                 crc);
         }
 

@@ -10,17 +10,237 @@ Unity 文件序列化、完整性校验、AES 加密和受保护 AssetBundle 加
 https://github.com/DeathKnight-007/Tools-UPM-Package.git?path=/Packages/com.deathknight.serializablereadwrite
 ```
 
+所有公开 API 均位于 `SerializableReadWrite` 命名空间。
+
 ## 快速开始
 
 ```csharp
 using SerializableReadWrite;
 
-ObjectSaveRead.Save(path, data, "encryption-password", new HMACVerify(), "verify-key");
-MyData loaded = ObjectSaveRead.Read<MyData>(path, "encryption-password", new HMACVerify(), "verify-key");
+ObjectSaveRead.Save(path, data, "encryption-password", new HMACVerify());
+MyData loaded = ObjectSaveRead.Read<MyData>(path, "encryption-password", new HMACVerify());
 ```
 
-完整说明参见 `Documentation~`，也可以从 Package Manager 导入 Basic Usage 示例。
+`passward`/`EncryptionPassword` 为 `null` 时不加密；`verify`/`Verify` 为 `null` 时不校验。使用 `HMACVerify` 时必须提供 AES 密码，AES Key 和 HMAC Key 会通过 PBKDF2 从同一个密码派生，无需额外的 HMAC 密码。读取时必须使用与写入时一致的配置。
+
+## 公开 API
+
+### ObjectSaveRead
+
+使用 Newtonsoft.Json 在对象和受保护文件之间读写。适合存档、配置等可 JSON 序列化的数据。
+
+```csharp
+public static void Save<T>(
+    string path,
+    T data,
+    string passward = null,
+    IVerify verify = null);
+
+public static T Read<T>(
+    string path,
+    string passward = null,
+    IVerify verify = null);
+```
+
+### ByteSaveRead
+
+在原始 `byte[]` 和受保护文件之间读写。
+
+```csharp
+public static void Save(
+    string path,
+    byte[] data,
+    string passward = null,
+    IVerify verify = null);
+
+public static byte[] Read(
+    string path,
+    string passward = null,
+    IVerify verify = null);
+```
+
+### FileEncrypt
+
+流式处理普通文件，适合不希望把整个源文件一次性载入内存的场景。源路径与目标路径不能相同。
+
+```csharp
+public static void Encrypt(
+    string sourcePath,
+    string encryptedPath,
+    string passward = null,
+    IVerify verify = null,
+    IProgress<FileEncryptProgress> progress = null);
+
+public static void Decrypt(
+    string encryptedPath,
+    string outputPath,
+    string passward = null,
+    IVerify verify = null,
+    IProgress<FileEncryptProgress> progress = null);
+
+public static byte[] DecryptToBytes(
+    string encryptedPath,
+    string passward = null,
+    IVerify verify = null,
+    IProgress<FileEncryptProgress> progress = null);
+```
+
+进度示例：
+
+```csharp
+var progress = new Progress<FileEncryptProgress>(value =>
+{
+    UnityEngine.Debug.Log($"{value.Stage}: {value.TotalProgress:P0}");
+});
+
+FileEncrypt.Encrypt(sourcePath, protectedPath, "password", new HMACVerify(), progress);
+```
+
+### AssetBundleLoader
+
+校验、解密并从内存加载受保护的 AssetBundle。文件可先通过 `FileEncrypt.Encrypt` 生成。
+
+```csharp
+public static AssetBundle Load(
+    string protectedPath,
+    string passward = null,
+    IVerify verify = null,
+    uint crc = 0);
+
+public static Task<AssetBundle> LoadAsync(
+    string protectedPath,
+    string passward = null,
+    IVerify verify = null,
+    uint crc = 0);
+```
+
+`LoadAsync` 必须从 Unity 主线程调用；文件校验和解密在工作线程执行，AssetBundle 创建回到主线程。`crc` 为 `0` 时跳过 Unity 的 CRC 检查。
+
+### ProtectedFile
+
+底层流式 API。上层可自行决定明文内容的编码或序列化格式。
+
+```csharp
+public static void Write(
+    string path,
+    Action<Stream> writePlaintext,
+    ProtectedFileOptions options = null,
+    IProgress<FileEncryptProgress> progress = null,
+    long plaintextLength = -1);
+
+public static TResult Read<TResult>(
+    string path,
+    Func<Stream, TResult> readPlaintext,
+    ProtectedFileOptions options = null,
+    IProgress<FileEncryptProgress> progress = null);
+```
+
+启用 `Write` 进度报告时，必须通过 `plaintextLength` 提供明文总字节数。传给回调的流由 `ProtectedFile` 管理，回调不应关闭该流。
+
+文件布局为 `[Tag][salt][IV][data]`，未启用的可选部分不会写入。启用 AES 时 `data` 为密文；当前 Tag 校验范围为 `data`。
+
+### ProtectedFileOptions
+
+```csharp
+public sealed class ProtectedFileOptions
+{
+    public string EncryptionPassword { get; set; }
+    public IVerify Verify { get; set; }
+}
+```
+
+- `EncryptionPassword`：`null` 表示不使用 AES 加密。
+- `Verify`：`null` 表示不生成或验证 Tag。
+- 使用 `HMACVerify` 时，PBKDF2-SHA256 从 `EncryptionPassword` 和随机 Salt 派生 64 字节，前 32 字节作为 AES Key，后 32 字节作为 HMAC Key。
+
+### IVerify
+
+自定义完整性校验算法需实现此接口。`TagLength` 必须大于 `0`，`ComputeTag` 返回数组的长度必须与其一致。
+
+```csharp
+public interface IVerify
+{
+    int TagLength { get; }
+
+    byte[] ComputeTag(byte[] data, byte[] passward = null);
+    bool VerifyTag(byte[] data, byte[] tag, byte[] passward = null);
+
+    byte[] ComputeTag(Stream data, byte[] passward = null);
+    bool VerifyTag(Stream data, byte[] tag, byte[] passward = null);
+}
+```
+
+流重载从流的当前位置处理到流末尾。
+
+### HashVerify
+
+无密钥 SHA-256 完整性校验，`TagLength` 为 32 字节。可发现文件损坏，但攻击者能够在修改内容后重新计算 Tag。
+
+```csharp
+public class HashVerify : IVerify
+{
+    public int TagLength { get; }
+
+    public byte[] ComputeTag(byte[] data, byte[] passward = null);
+    public byte[] ComputeTag(Stream data, byte[] passward = null);
+    public bool VerifyTag(byte[] data, byte[] tag, byte[] passward = null);
+    public bool VerifyTag(Stream data, byte[] tag, byte[] passward = null);
+}
+```
+
+### HMACVerify
+
+基于密钥的 HMAC-SHA256 校验，`TagLength` 为 32 字节。通过上层文件 API 使用时，HMAC Key 自动从 AES 密码派生，无需额外输入校验密码。
+
+```csharp
+public class HMACVerify : IVerify
+{
+    public int TagLength { get; }
+
+    public byte[] ComputeTag(byte[] data, byte[] passward);
+    public byte[] ComputeTag(Stream data, byte[] passward = null);
+    public bool VerifyTag(byte[] data, byte[] tag, byte[] passward = null);
+    public bool VerifyTag(Stream data, byte[] tag, byte[] passward = null);
+}
+```
+
+### FileEncryptProgress 与 FileEncryptStage
+
+```csharp
+public readonly struct FileEncryptProgress
+{
+    public FileEncryptStage Stage { get; }
+    public long StageProcessedBytes { get; }
+    public long StageTotalBytes { get; }
+    public int CompletedStageCount { get; }
+    public int TotalStageCount { get; }
+    public bool IsStageCompleted { get; }
+    public float StageProgress { get; }
+    public float TotalProgress { get; }
+}
+
+public enum FileEncryptStage
+{
+    Writing,
+    Encrypting,
+    GeneratingTag,
+    VerifyingTag,
+    Reading,
+    Decrypting,
+    Completed
+}
+```
+
+`StageProgress` 和 `TotalProgress` 的范围为 0 到 1。并非每次操作都会经历所有阶段，实际阶段数由是否启用加密和校验决定。
+
+## 校验方式选择
+
+- `HashVerify`：仅用于检测意外损坏，不提供防篡改能力。
+- `HMACVerify`：使用从 AES 密码派生的独立密钥验证 Salt、IV 和密文，适合需要提高篡改成本的本地文件。
+- `verify == null`：不写入也不检查 Tag。
 
 ## 安全边界
 
-客户端中的密码和密钥可能被提取。本包可以防止意外损坏并提高篡改成本，但不能把不可信客户端变成可信环境。
+客户端中的密码和密钥可能被提取。本包可以发现意外损坏并提高篡改成本，但不能把不可信客户端变成可信环境。对于可由攻击者控制的文件，优先使用 `HMACVerify`，不要把无密钥哈希当作身份认证。
+
+完整示例也可以从 Package Manager 导入 **Basic Usage**。

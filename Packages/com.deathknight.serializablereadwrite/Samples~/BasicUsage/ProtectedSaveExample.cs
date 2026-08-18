@@ -10,7 +10,7 @@ public sealed class ProtectedSaveExample : MonoBehaviour
     public void Save()
     {
         var data = new PlayerData { Level = 1, PlayerName = "Knight" };
-        ObjectSaveRead.Save(SavePath, data, "encryption-password", new HMACVerify(), "verify-key");
+        ObjectSaveRead.Save(SavePath, data, "encryption-password", new HMACVerify());
     }
 
     public PlayerData Load()
@@ -18,8 +18,7 @@ public sealed class ProtectedSaveExample : MonoBehaviour
         return ObjectSaveRead.Read<PlayerData>(
             SavePath,
             "encryption-password",
-            new HMACVerify(),
-            "verify-key");
+            new HMACVerify());
     }
 
     [Serializable]

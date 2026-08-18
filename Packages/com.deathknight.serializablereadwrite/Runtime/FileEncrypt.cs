@@ -18,7 +18,6 @@ namespace SerializableReadWrite
             string encryptedPath,
             string passward = null,
             IVerify verify = null,
-            string verifyPassward = null,
             IProgress<FileEncryptProgress> progress = null)
         {
             EnsureDifferentPaths(sourcePath, encryptedPath);
@@ -37,7 +36,7 @@ namespace SerializableReadWrite
 
                     inputStream.CopyTo(outputStream, FileBufferSize);
                 },
-                CreateOptions(passward, verify, verifyPassward),
+                CreateOptions(passward, verify),
                 progress,
                 sourceLength);
         }
@@ -50,7 +49,6 @@ namespace SerializableReadWrite
             string outputPath,
             string passward = null,
             IVerify verify = null,
-            string verifyPassward = null,
             IProgress<FileEncryptProgress> progress = null)
         {
             EnsureDifferentPaths(encryptedPath, outputPath);
@@ -69,7 +67,7 @@ namespace SerializableReadWrite
                     inputStream.CopyTo(outputStream, FileBufferSize);
                     return true;
                 },
-                CreateOptions(passward, verify, verifyPassward),
+                CreateOptions(passward, verify),
                 progress);
         }
 
@@ -80,7 +78,6 @@ namespace SerializableReadWrite
             string encryptedPath,
             string passward = null,
             IVerify verify = null,
-            string verifyPassward = null,
             IProgress<FileEncryptProgress> progress = null)
         {
             return ProtectedFile.Read(
@@ -91,20 +88,18 @@ namespace SerializableReadWrite
                     inputStream.CopyTo(memoryStream, FileBufferSize);
                     return memoryStream.ToArray();
                 },
-                CreateOptions(passward, verify, verifyPassward),
+                CreateOptions(passward, verify),
                 progress);
         }
 
         private static ProtectedFileOptions CreateOptions(
             string passward,
-            IVerify verify,
-            string verifyPassward)
+            IVerify verify)
         {
             return new ProtectedFileOptions
             {
                 EncryptionPassword = passward,
-                Verify = verify,
-                VerifyKey = verifyPassward
+                Verify = verify
             };
         }
 
