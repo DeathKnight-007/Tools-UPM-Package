@@ -15,7 +15,7 @@ https://github.com/DeathKnight-007/Tools-UPM-Package.git?path=/Packages/com.deat
 ```csharp
 using SerializableReadWrite;
 
-FileArchive.CompressDirectory(sourceDirectory, archivePath);
+FileArchive.CompressFiles(sourceFiles, archivePath);
 FileArchive.ExtractToDirectory(archivePath, outputDirectory);
 ```
 

@@ -2,11 +2,10 @@
 
 ## 1. 功能说明
 
-`FileArchive` 用于创建和解压 ZIP 文件，对外提供三个静态接口：
+`FileArchive` 用于创建和解压 ZIP 文件，对外提供两个静态接口：
 
 | 接口 | 用途 |
 | --- | --- |
-| `CompressDirectory` | 将一个目录中的全部文件压缩为 ZIP |
 | `CompressFiles` | 将指定的多个文件压缩为 ZIP |
 | `ExtractToDirectory` | 将 ZIP 中的文件解压到指定目录 |
 
@@ -23,75 +22,12 @@ using System.Threading.Tasks;
 
 ---
 
-## 2. 压缩整个目录
-
-### 接口
-
-```csharp
-public static void CompressDirectory(
-    string sourceDirectory,
-    string archivePath,
-    CompressionLevel compressionLevel = CompressionLevel.Optimal,
-    IProgress<FileArchiveProgress> progress = null)
-```
-
-### 参数
-
-| 参数 | 说明 |
-| --- | --- |
-| `sourceDirectory` | 要压缩的源目录 |
-| `archivePath` | 输出 ZIP 文件路径 |
-| `compressionLevel` | 压缩等级，默认是 `Optimal` |
-| `progress` | 可选的进度回调 |
-
-### 使用示例
-
-```csharp
-string sourceDirectory = @"D:\GameData";
-string archivePath = @"D:\Backup\GameData.zip";
-
-await Task.Run(() =>
-{
-    FileArchive.CompressDirectory(
-        sourceDirectory,
-        archivePath,
-        CompressionLevel.Optimal);
-});
-```
-
-ZIP 中会保留文件相对于 `sourceDirectory` 的目录结构。
-
-例如：
-
-```text
-D:\GameData\config.json
-D:\GameData\Save\player.dat
-```
-
-压缩后的条目为：
-
-```text
-config.json
-Save/player.dat
-```
-
-注意：
-
-- `sourceDirectory` 必须存在。
-- `archivePath` 的父目录必须已经存在。
-- 如果目标 ZIP 已存在，会被覆盖。
-- 该接口压缩目录中的文件，不会单独保存空目录。
-- 如果 ZIP 路径位于源目录内，目标 ZIP 本身不会被压缩进自己。
-
----
-
-## 3. 压缩指定文件
+## 2. 压缩指定文件
 
 ### 接口
 
 ```csharp
 public static void CompressFiles(
-    string baseDirectory,
     IEnumerable<string> sourceFiles,
     string archivePath,
     CompressionLevel compressionLevel = CompressionLevel.Optimal,
@@ -102,7 +38,6 @@ public static void CompressFiles(
 
 | 参数 | 说明 |
 | --- | --- |
-| `baseDirectory` | 计算 ZIP 内相对路径的基础目录 |
 | `sourceFiles` | 要压缩的文件路径集合 |
 | `archivePath` | 输出 ZIP 文件路径 |
 | `compressionLevel` | 压缩等级，默认是 `Optimal` |
@@ -111,7 +46,6 @@ public static void CompressFiles(
 ### 使用示例
 
 ```csharp
-string baseDirectory = @"D:\GameData";
 string archivePath = @"D:\Backup\SelectedFiles.zip";
 
 string[] files =
@@ -123,7 +57,6 @@ string[] files =
 await Task.Run(() =>
 {
     FileArchive.CompressFiles(
-        baseDirectory,
         files,
         archivePath,
         CompressionLevel.Optimal);
@@ -132,17 +65,16 @@ await Task.Run(() =>
 
 注意：
 
-- `baseDirectory` 必须存在。
 - `sourceFiles` 不能为 `null`。
 - 集合中的文件必须存在。
-- 所有文件都必须位于 `baseDirectory` 内。
-- 同一个 ZIP 条目名不能重复。
+- ZIP 条目只使用源文件的文件名，不保留其所在目录。
+- 不同目录中的同名文件会产生重复 ZIP 条目名，此时接口会拒绝压缩。
 - `archivePath` 的父目录必须已经存在。
 - 如果目标 ZIP 已存在，会被覆盖。
 
 ---
 
-## 4. 解压 ZIP
+## 3. 解压 ZIP
 
 ### 接口
 
@@ -208,7 +140,7 @@ await Task.Run(() =>
 
 ---
 
-## 5. 压缩等级
+## 4. 压缩等级
 
 `compressionLevel` 使用 `System.IO.Compression.CompressionLevel`：
 
@@ -232,7 +164,7 @@ CompressionLevel.Fastest
 
 ---
 
-## 6. 获取处理进度
+## 5. 获取处理进度
 
 创建 `Progress<FileArchiveProgress>`，然后传给压缩或解压接口：
 
@@ -249,8 +181,8 @@ IProgress<FileArchiveProgress> progress =
 
 await Task.Run(() =>
 {
-    FileArchive.CompressDirectory(
-        sourceDirectory,
+    FileArchive.CompressFiles(
+        sourceFiles,
         archivePath,
         CompressionLevel.Optimal,
         progress);
@@ -281,7 +213,7 @@ var progress = new Progress<FileArchiveProgress>(value =>
 
 ---
 
-## 7. FileArchiveProgress 字段
+## 6. FileArchiveProgress 字段
 
 | 属性 | 类型 | 说明 |
 | --- | --- | --- |
@@ -305,7 +237,7 @@ totalSlider.value = value.TotalProgress;
 
 ---
 
-## 8. 完整调用示例
+## 7. 完整调用示例
 
 ```csharp
 using System;
@@ -321,9 +253,13 @@ namespace SerializableReadWrite
         [SerializeField] private Slider progressSlider;
         [SerializeField] private Text progressText;
 
-        public async void BackupDirectory()
+        public async void BackupFiles()
         {
-            string sourceDirectory = @"D:\GameData";
+            string[] sourceFiles =
+            {
+                @"D:\GameData\config.json",
+                @"D:\GameData\player.dat"
+            };
             string archivePath = @"D:\Backup\GameData.zip";
 
             var progress = new Progress<FileArchiveProgress>(value =>
@@ -338,8 +274,8 @@ namespace SerializableReadWrite
             {
                 await Task.Run(() =>
                 {
-                    FileArchive.CompressDirectory(
-                        sourceDirectory,
+                    FileArchive.CompressFiles(
+                        sourceFiles,
                         archivePath,
                         CompressionLevel.Optimal,
                         progress);
@@ -358,7 +294,7 @@ namespace SerializableReadWrite
 
 ---
 
-## 9. 异常处理
+## 8. 异常处理
 
 建议所有调用都使用 `try/catch`：
 
@@ -382,7 +318,7 @@ catch (Exception exception)
 
 | 异常 | 常见原因 |
 | --- | --- |
-| `ArgumentException` | 路径为空、源文件不在基础目录内 |
+| `ArgumentException` | 路径为空 |
 | `ArgumentNullException` | `sourceFiles` 为 `null` |
 | `ArgumentOutOfRangeException` | 解压数量或字节限制不合法 |
 | `DirectoryNotFoundException` | 源目录不存在 |

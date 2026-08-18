@@ -4,10 +4,16 @@ using UnityEngine;
 
 public sealed class FileArchiveExample : MonoBehaviour
 {
-    public void CompressPersistentData()
+    public void CompressFiles()
     {
         string archivePath = Path.Combine(Application.temporaryCachePath, "persistent-data.zip");
-        FileArchive.CompressDirectory(Application.persistentDataPath, archivePath);
+        string[] sourceFiles =
+        {
+            Path.Combine(Application.persistentDataPath, "settings.json"),
+            Path.Combine(Application.persistentDataPath, "save.dat")
+        };
+
+        FileArchive.CompressFiles(sourceFiles, archivePath);
     }
 
     public void ExtractToTemporaryCache()

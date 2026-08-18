@@ -4,7 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 
-namespace SerializableReadWrite
+namespace MyFileArchive
 {
     /// <summary>
     /// 负责把多个文件压缩成一个 ZIP 文件，以及把 ZIP 中的文件解压到目录。
@@ -18,59 +18,20 @@ namespace SerializableReadWrite
         private const int ProgressIntervalMilliseconds = 100;
 
         /// <summary>
-        /// 把目录中的全部文件压缩成一个 ZIP 文件，ZIP 中保留相对目录结构。
-        /// </summary>
-        public static void CompressDirectory(
-            string sourceDirectory,
-            string archivePath,
-            CompressionLevel compressionLevel = CompressionLevel.Optimal,
-            IProgress<FileArchiveProgress> progress = null)
-        {
-            if (string.IsNullOrEmpty(sourceDirectory))
-                throw new ArgumentException("源目录路径不能为空", nameof(sourceDirectory));
-
-            string fullSourceDirectory = Path.GetFullPath(sourceDirectory);
-
-            if (!Directory.Exists(fullSourceDirectory))
-                throw new DirectoryNotFoundException($"源目录不存在：{fullSourceDirectory}");
-
-            string[] sourceFiles = Directory.GetFiles(
-                fullSourceDirectory,
-                "*",
-                SearchOption.AllDirectories);
-
-            CompressFiles(
-                fullSourceDirectory,
-                sourceFiles,
-                archivePath,
-                compressionLevel,
-                progress);
-        }
-
-        /// <summary>
         /// 把指定的多个文件压缩成一个 ZIP 文件。
-        /// ZIP 中的文件名使用文件相对于 baseDirectory 的路径。
+        /// ZIP 中的条目使用源文件的文件名，不保留源目录路径。
         /// </summary>
         public static void CompressFiles(
-            string baseDirectory,
             IEnumerable<string> sourceFiles,
             string archivePath,
             CompressionLevel compressionLevel = CompressionLevel.Optimal,
             IProgress<FileArchiveProgress> progress = null)
         {
-            if (string.IsNullOrEmpty(baseDirectory))
-                throw new ArgumentException("基础目录路径不能为空", nameof(baseDirectory));
-
             if (sourceFiles == null)
                 throw new ArgumentNullException(nameof(sourceFiles));
 
             if (string.IsNullOrEmpty(archivePath))
                 throw new ArgumentException("压缩文件路径不能为空", nameof(archivePath));
-
-            string fullBaseDirectory = Path.GetFullPath(baseDirectory);
-
-            if (!Directory.Exists(fullBaseDirectory))
-                throw new DirectoryNotFoundException($"基础目录不存在：{fullBaseDirectory}");
 
             string fullArchivePath = Path.GetFullPath(archivePath);
             StringComparison pathComparison = GetPathComparison();
@@ -92,10 +53,7 @@ namespace SerializableReadWrite
                 if (!File.Exists(fullSourcePath))
                     throw new FileNotFoundException("源文件不存在", fullSourcePath);
 
-                string entryName = GetEntryName(
-                    fullBaseDirectory,
-                    fullSourcePath,
-                    pathComparison);
+                string entryName = Path.GetFileName(fullSourcePath);
 
                 if (!entryNames.Add(entryName))
                     throw new InvalidDataException($"ZIP中存在重复文件名：{entryName}");
@@ -392,27 +350,6 @@ namespace SerializableReadWrite
                 totalProcessedBytes,
                 totalBytes,
                 isFileCompleted));
-        }
-
-        private static string GetEntryName(
-            string fullBaseDirectory,
-            string fullSourcePath,
-            StringComparison pathComparison)
-        {
-            string baseDirectoryPrefix = fullBaseDirectory.TrimEnd(
-                Path.DirectorySeparatorChar,
-                Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-
-            if (!fullSourcePath.StartsWith(baseDirectoryPrefix, pathComparison))
-            {
-                throw new ArgumentException(
-                    $"源文件不在基础目录内：{fullSourcePath}",
-                    nameof(fullSourcePath));
-            }
-
-            return fullSourcePath
-                .Substring(baseDirectoryPrefix.Length)
-                .Replace(Path.DirectorySeparatorChar, '/');
         }
 
         private static string NormalizeAndValidateEntryName(string entryName)

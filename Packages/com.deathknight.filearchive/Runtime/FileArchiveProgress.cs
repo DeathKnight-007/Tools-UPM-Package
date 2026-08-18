@@ -1,4 +1,4 @@
-namespace SerializableReadWrite
+namespace MyFileArchive
 {
     /// <summary>
     /// 文件压缩或解压过程中的进度信息。
