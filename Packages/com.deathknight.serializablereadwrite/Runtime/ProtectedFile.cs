@@ -7,9 +7,9 @@ namespace SerializableReadWrite
     /// <summary>
     /// 负责明文字节流与受保护文件之间的转换。
     /// 不关心上层写入的是 JSON、图片还是其他二进制数据。
-    /// 文件布局为：[Tag][salt][IV][data]，不存在的可选部分不写入。
-    /// 启用 AES 时，PBKDF2 从同一个密码派生独立的 AES Key 和 HMAC Key。
-    /// 校验范围包含 salt、IV 和 data；启用 AES 时，data 是密文。
+    /// 密码模式的文件布局为：[Tag][salt][IV][data]；直接 AES 模式没有 salt。
+    /// 密码模式通过 PBKDF2 派生独立的 AES Key 和 HMAC Key；直接 AES 模式跳过派生。
+    /// 校验范围包含已写入的 salt、IV 和 data；启用 AES 时，data 是密文。
     /// </summary>
     public static class ProtectedFile
     {
@@ -49,17 +49,18 @@ namespace SerializableReadWrite
                     progress,
                     options.Verify == null ? 1 : 2);
 
-            Aes aes = null;
+            Aes aes = options.EncryptionAes;
+            bool disposeAes = false;
             byte[] salt = null;
-            byte[] verifyKey = null;
+            byte[] verifyKey = CloneKey(options.VerifyKey);
 
-            // 加密
             if (options.EncryptionPassword != null)
             {
-                aes = GetAes(
+                aes = CreatePasswordAes(
                     options.EncryptionPassword,
                     out salt,
                     out verifyKey);
+                disposeAes = true;
             }
 
             try
@@ -99,14 +100,15 @@ namespace SerializableReadWrite
 
                     if (aes != null)
                     {
-                        fs.Write(salt, 0, salt.Length);
+                        if (salt != null)
+                            fs.Write(salt, 0, salt.Length);
 
-                        byte[] iv = aes.IV;
+                        byte[] iv = GenerateIv();
                         fs.Write(iv, 0, iv.Length);
 
                         using (CryptoStream cryptoStream = new CryptoStream(
                             fs,
-                            aes.CreateEncryptor(),
+                            CreateEncryptor(aes, iv),
                             CryptoStreamMode.Write,
                             true))
                         {
@@ -172,7 +174,9 @@ namespace SerializableReadWrite
             }
             finally
             {
-                aes?.Dispose();
+                if (disposeAes)
+                    aes.Dispose();
+
                 ClearKey(verifyKey);
             }
         }
@@ -221,42 +225,118 @@ namespace SerializableReadWrite
                     authenticatedDataOffset = options.Verify.TagLength;
                 }
 
-                byte[] salt = null;
+                Aes aes = options.EncryptionAes;
+                bool disposeAes = false;
                 byte[] iv = null;
                 byte[] encryptionKey = null;
-                byte[] verifyKey = null;
+                byte[] verifyKey = CloneKey(options.VerifyKey);
 
-                if (options.EncryptionPassword != null)
+                try
                 {
-                    salt = new byte[SaltLength];
-                    ReadExactly(fs, salt, 0, salt.Length);
+                    if (options.EncryptionPassword != null)
+                    {
+                        byte[] salt = new byte[SaltLength];
+                        ReadExactly(fs, salt, 0, salt.Length);
 
-                    iv = new byte[IvLength];
-                    ReadExactly(fs, iv, 0, iv.Length);
+                        DeriveKeys(
+                            options.EncryptionPassword,
+                            salt,
+                            out encryptionKey,
+                            out verifyKey);
 
-                    DeriveKeys(
-                        options.EncryptionPassword,
-                        salt,
-                        out encryptionKey,
-                        out verifyKey);
-                }
+                        aes = Aes.Create();
+                        aes.Key = encryptionKey;
+                        disposeAes = true;
+                    }
 
-                long plaintextDataOffset = fs.Position;
+                    if (aes != null)
+                    {
+                        iv = new byte[IvLength];
+                        ReadExactly(fs, iv, 0, iv.Length);
+                    }
 
-                // 校验 Tag
-                if (options.Verify != null)
-                {
-                    fs.Seek(authenticatedDataOffset, SeekOrigin.Begin);
+                    long plaintextDataOffset = fs.Position;
+
+                    // 校验 Tag
+                    if (options.Verify != null)
+                    {
+                        fs.Seek(authenticatedDataOffset, SeekOrigin.Begin);
+
+                        progressReporter?.BeginStage(
+                            FileEncryptStage.VerifyingTag,
+                            fs.Length - authenticatedDataOffset);
+
+                        bool verifySucceeded;
+
+                        if (progressReporter == null)
+                        {
+                            verifySucceeded = options.Verify.VerifyTag(fs, tag, verifyKey);
+                        }
+                        else
+                        {
+                            using var progressStream = new ProgressStream(
+                                fs,
+                                progressReporter.AddBytes,
+                                leaveOpen: true);
+                            verifySucceeded = options.Verify.VerifyTag(
+                                progressStream,
+                                tag,
+                                verifyKey);
+                        }
+
+                        progressReporter?.CompleteStage();
+
+                        if (!verifySucceeded)
+                        {
+                            throw new InvalidDataException("文件完整及清白校验不通过");
+                        }
+
+                        fs.Seek(plaintextDataOffset, SeekOrigin.Begin);
+                    }
+
+                    if (aes != null)
+                    {
+                        progressReporter?.BeginStage(
+                            FileEncryptStage.Decrypting,
+                            fs.Length - fs.Position);
+
+                        TResult result;
+
+                        ProgressStream progressStream = null;
+                        Stream encryptedInput = fs;
+
+                        if (progressReporter != null)
+                        {
+                            progressStream = new ProgressStream(
+                                fs,
+                                progressReporter.AddBytes,
+                                leaveOpen: true);
+                            encryptedInput = progressStream;
+                        }
+
+                        using (progressStream)
+                        using (CryptoStream cryptoStream = new CryptoStream(
+                            encryptedInput,
+                            CreateDecryptor(aes, iv),
+                            CryptoStreamMode.Read))
+                        {
+                            result = readPlaintext(cryptoStream);
+                        }
+
+                        progressReporter?.CompleteStage();
+                        progressReporter?.Complete();
+                        return result;
+                    }
 
                     progressReporter?.BeginStage(
-                        FileEncryptStage.VerifyingTag,
-                        fs.Length - authenticatedDataOffset);
+                        FileEncryptStage.Reading,
+                        fs.Length - fs.Position);
 
-                    bool verifySucceeded;
+                    TResult plaintextResult;
 
                     if (progressReporter == null)
                     {
-                        verifySucceeded = options.Verify.VerifyTag(fs, tag, verifyKey);
+                        plaintextResult = readPlaintext(fs);
                     }
                     else
                     {
@@ -264,85 +344,21 @@ namespace SerializableReadWrite
                             fs,
                             progressReporter.AddBytes,
                             leaveOpen: true);
-                        verifySucceeded = options.Verify.VerifyTag(
-                            progressStream,
-                            tag,
-                            verifyKey);
-                    }
-
-                    progressReporter?.CompleteStage();
-
-                    if (!verifySucceeded)
-                    {
-                        throw new InvalidDataException("文件完整及清白校验不通过");
-                    }
-
-                    fs.Seek(plaintextDataOffset, SeekOrigin.Begin);
-                }
-
-                if (options.EncryptionPassword != null)
-                {
-                    using Aes aes = Aes.Create();
-                    aes.IV = iv;
-                    aes.Key = encryptionKey;
-
-                    progressReporter?.BeginStage(
-                        FileEncryptStage.Decrypting,
-                        fs.Length - fs.Position);
-
-                    TResult result;
-
-                    ProgressStream progressStream = null;
-                    Stream encryptedInput = fs;
-
-                    if (progressReporter != null)
-                    {
-                        progressStream = new ProgressStream(
-                            fs,
-                            progressReporter.AddBytes,
-                            leaveOpen: true);
-                        encryptedInput = progressStream;
-                    }
-
-                    using (progressStream)
-                    using (CryptoStream cryptoStream = new CryptoStream(
-                        encryptedInput,
-                        aes.CreateDecryptor(),
-                        CryptoStreamMode.Read))
-                    {
-                        result = readPlaintext(cryptoStream);
+                        plaintextResult = readPlaintext(progressStream);
                     }
 
                     progressReporter?.CompleteStage();
                     progressReporter?.Complete();
+                    return plaintextResult;
+                }
+                finally
+                {
+                    if (disposeAes)
+                        aes.Dispose();
+
                     ClearKey(encryptionKey);
                     ClearKey(verifyKey);
-                    return result;
                 }
-
-                progressReporter?.BeginStage(
-                    FileEncryptStage.Reading,
-                    fs.Length - fs.Position);
-
-                TResult plaintextResult;
-
-                if (progressReporter == null)
-                {
-                    plaintextResult = readPlaintext(fs);
-                }
-                else
-                {
-                    using var progressStream = new ProgressStream(
-                        fs,
-                        progressReporter.AddBytes,
-                        leaveOpen: true);
-                    plaintextResult = readPlaintext(progressStream);
-                }
-
-                progressReporter?.CompleteStage();
-                progressReporter?.Complete();
-                ClearKey(verifyKey);
-                return plaintextResult;
             }
         }
 
@@ -364,17 +380,12 @@ namespace SerializableReadWrite
             writePlaintext(progressStream);
         }
 
-        private static Aes GetAes(
+        private static Aes CreatePasswordAes(
             string passward,
             out byte[] salt,
             out byte[] verifyKey)
         {
-            // 使用 AES 加密
             Aes aes = Aes.Create();
-
-            aes.GenerateIV(); // aes.IV 可以自动生成，也可以自己生成，但是没必要自己生成
-                              // 密文初始化向量保存在加密后的文件开头，保证数据相同、密码相同，但是加密结果不同
-            byte[] iv = aes.IV; // 长度是16
 
             salt = new byte[SaltLength]; // 一般是16或者32，salt的目的是：1、随机使每个文件真正的密码不同；2、通过 salt + passward 计算真正的 key，增大计算量
                                            // ArrayPool<byte>.Shared.Rent() 需要池化条件：1、64KB以上（85KB是托管判断大文件阈值）；2、高频创建
@@ -388,6 +399,43 @@ namespace SerializableReadWrite
             aes.Key = encryptionKey;
             ClearKey(encryptionKey);
             return aes;
+        }
+
+        private static byte[] GenerateIv()
+        {
+            byte[] iv = new byte[IvLength];
+            using (RandomNumberGenerator random = RandomNumberGenerator.Create())
+            {
+                random.GetBytes(iv);
+            }
+
+            return iv;
+        }
+
+        private static ICryptoTransform CreateEncryptor(Aes aes, byte[] iv)
+        {
+            byte[] key = aes.Key;
+            try
+            {
+                return aes.CreateEncryptor(key, iv);
+            }
+            finally
+            {
+                ClearKey(key);
+            }
+        }
+
+        private static ICryptoTransform CreateDecryptor(Aes aes, byte[] iv)
+        {
+            byte[] key = aes.Key;
+            try
+            {
+                return aes.CreateDecryptor(key, iv);
+            }
+            finally
+            {
+                ClearKey(key);
+            }
         }
 
         private static void DeriveKeys(
@@ -431,11 +479,38 @@ namespace SerializableReadWrite
 
         private static void ValidateOptions(ProtectedFileOptions options)
         {
-            if (options.Verify is HMACVerify && options.EncryptionPassword == null)
+            if (options.EncryptionPassword != null && options.EncryptionAes != null)
             {
                 throw new InvalidOperationException(
-                    "HMACVerify 必须与非空的 EncryptionPassword 一起使用，HMAC Key 会从该密码派生");
+                    "EncryptionPassword 与 EncryptionAes 不能同时设置");
             }
+
+            if (options.EncryptionPassword != null && options.VerifyKey != null)
+            {
+                throw new InvalidOperationException(
+                    "密码模式会自动派生校验 Key，不能同时设置 VerifyKey");
+            }
+
+            if (options.Verify is HMACVerify &&
+                options.EncryptionPassword == null &&
+                options.EncryptionAes == null)
+            {
+                throw new InvalidOperationException(
+                    "HMACVerify 必须与 EncryptionPassword 或 EncryptionAes 一起使用");
+            }
+
+            if (options.Verify is HMACVerify &&
+                options.EncryptionPassword == null &&
+                (options.VerifyKey == null || options.VerifyKey.Length == 0))
+            {
+                throw new InvalidOperationException(
+                    "直接 AES 模式使用 HMACVerify 时必须提供独立的 VerifyKey");
+            }
+        }
+
+        private static byte[] CloneKey(byte[] key)
+        {
+            return key == null ? null : (byte[])key.Clone();
         }
 
         private static void ClearKey(byte[] key)

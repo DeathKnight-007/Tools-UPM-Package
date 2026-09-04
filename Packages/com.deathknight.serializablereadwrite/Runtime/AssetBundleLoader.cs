@@ -1,4 +1,5 @@
 using System.IO;
+using System.Security.Cryptography;
 using System.Threading.Tasks;
 using UnityEngine;
 
@@ -47,6 +48,49 @@ namespace SerializableReadWrite
                 protectedPath,
                 passward,
                 verify,
+                crc);
+        }
+
+        /// <summary>
+        /// 使用调用方提供的 AES 同步校验、解密并加载 AssetBundle。
+        /// </summary>
+        public static AssetBundle LoadWithAes(
+            string protectedPath,
+            Aes aes,
+            IVerify verify = null,
+            byte[] verifyKey = null,
+            uint crc = 0)
+        {
+            byte[] bundleBytes = FileEncrypt.DecryptToBytesWithAes(
+                protectedPath,
+                aes,
+                verify,
+                verifyKey);
+
+            AssetBundle assetBundle = AssetBundle.LoadFromMemory(bundleBytes, crc);
+
+            if (assetBundle == null)
+                throw new InvalidDataException("解密后的数据不是有效的AssetBundle");
+
+            return assetBundle;
+        }
+
+        /// <summary>
+        /// 使用调用方提供的 AES 在工作线程中校验和解密，然后回到 Unity 主线程加载 AssetBundle。
+        /// 此方法必须从 Unity 主线程调用，AES 在任务结束前不能被释放或并发使用。
+        /// </summary>
+        public static Task<AssetBundle> LoadAsyncWithAes(
+            string protectedPath,
+            Aes aes,
+            IVerify verify = null,
+            byte[] verifyKey = null,
+            uint crc = 0)
+        {
+            return EnsureRunner().LoadAsyncWithAes(
+                protectedPath,
+                aes,
+                verify,
+                verifyKey,
                 crc);
         }
 

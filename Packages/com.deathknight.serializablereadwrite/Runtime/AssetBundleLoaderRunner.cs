@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Security.Cryptography;
 using System.Threading.Tasks;
 using UnityEngine;
 
@@ -26,9 +27,32 @@ namespace SerializableReadWrite
 
             StartCoroutine(LoadCoroutine(
                 completionSource,
-                protectedPath,
-                passward,
-                verify,
+                () => FileEncrypt.DecryptToBytes(
+                    protectedPath,
+                    passward,
+                    verify),
+                crc));
+
+            return completionSource.Task;
+        }
+
+        internal Task<AssetBundle> LoadAsyncWithAes(
+            string protectedPath,
+            Aes aes,
+            IVerify verify,
+            byte[] verifyKey,
+            uint crc)
+        {
+            var completionSource = new TaskCompletionSource<AssetBundle>();
+            pendingRequests.Add(completionSource);
+
+            StartCoroutine(LoadCoroutine(
+                completionSource,
+                () => FileEncrypt.DecryptToBytesWithAes(
+                    protectedPath,
+                    aes,
+                    verify,
+                    verifyKey),
                 crc));
 
             return completionSource.Task;
@@ -36,16 +60,11 @@ namespace SerializableReadWrite
 
         private IEnumerator LoadCoroutine(
             TaskCompletionSource<AssetBundle> completionSource,
-            string protectedPath,
-            string passward,
-            IVerify verify,
+            Func<byte[]> decrypt,
             uint crc)
         {
             // 工作线程中只执行纯 C# 的文件读取、校验和解密，不调用 Unity API。
-            Task<byte[]> decryptTask = Task.Run(() => FileEncrypt.DecryptToBytes(
-                protectedPath,
-                passward,
-                verify));
+            Task<byte[]> decryptTask = Task.Run(decrypt);
 
             while (!decryptTask.IsCompleted)
                 yield return null;

@@ -21,7 +21,29 @@ ObjectSaveRead.Save(path, data, "encryption-password", new HMACVerify());
 MyData loaded = ObjectSaveRead.Read<MyData>(path, "encryption-password", new HMACVerify());
 ```
 
-`passward`/`EncryptionPassword` 为 `null` 时不加密；`verify`/`Verify` 为 `null` 时不校验。使用 `HMACVerify` 时必须提供 AES 密码，AES Key 和 HMAC Key 会通过 PBKDF2 从同一个密码派生，无需额外的 HMAC 密码。读取时必须使用与写入时一致的配置。
+`passward`/`EncryptionPassword` 为 `null` 时不使用密码模式；`verify`/`Verify` 为 `null` 时不校验。密码模式下，AES Key 和 HMAC Key 会通过 PBKDF2 从同一个密码派生。已经持有随机 AES Key 时可使用 `*WithAes` API，跳过 PBKDF2；若同时使用 `HMACVerify`，还需提供独立随机的 `verifyKey`。
+
+```csharp
+using System.Security.Cryptography;
+
+using Aes aes = Aes.Create();
+aes.GenerateKey();
+
+byte[] verifyKey = new byte[32];
+using (RandomNumberGenerator random = RandomNumberGenerator.Create())
+{
+    random.GetBytes(verifyKey);
+}
+
+ObjectSaveRead.SaveWithAes(path, data, aes, new HMACVerify(), verifyKey);
+MyData loaded = ObjectSaveRead.ReadWithAes<MyData>(
+    path,
+    aes,
+    new HMACVerify(),
+    verifyKey);
+```
+
+`*WithAes` 不会释放调用方的 AES，也不会修改它的 Key 或 IV。每次写入仍会生成新的随机 IV 并保存到文件，读取时自动取回该 IV。
 
 ## 公开 API
 
@@ -40,6 +62,19 @@ public static T Read<T>(
     string path,
     string passward = null,
     IVerify verify = null);
+
+public static void SaveWithAes<T>(
+    string path,
+    T data,
+    Aes aes,
+    IVerify verify = null,
+    byte[] verifyKey = null);
+
+public static T ReadWithAes<T>(
+    string path,
+    Aes aes,
+    IVerify verify = null,
+    byte[] verifyKey = null);
 ```
 
 ### ByteSaveRead
@@ -57,6 +92,19 @@ public static byte[] Read(
     string path,
     string passward = null,
     IVerify verify = null);
+
+public static void SaveWithAes(
+    string path,
+    byte[] data,
+    Aes aes,
+    IVerify verify = null,
+    byte[] verifyKey = null);
+
+public static byte[] ReadWithAes(
+    string path,
+    Aes aes,
+    IVerify verify = null,
+    byte[] verifyKey = null);
 ```
 
 ### FileEncrypt
@@ -82,6 +130,29 @@ public static byte[] DecryptToBytes(
     string encryptedPath,
     string passward = null,
     IVerify verify = null,
+    IProgress<FileEncryptProgress> progress = null);
+
+public static void EncryptWithAes(
+    string sourcePath,
+    string encryptedPath,
+    Aes aes,
+    IVerify verify = null,
+    byte[] verifyKey = null,
+    IProgress<FileEncryptProgress> progress = null);
+
+public static void DecryptWithAes(
+    string encryptedPath,
+    string outputPath,
+    Aes aes,
+    IVerify verify = null,
+    byte[] verifyKey = null,
+    IProgress<FileEncryptProgress> progress = null);
+
+public static byte[] DecryptToBytesWithAes(
+    string encryptedPath,
+    Aes aes,
+    IVerify verify = null,
+    byte[] verifyKey = null,
     IProgress<FileEncryptProgress> progress = null);
 ```
 
@@ -112,9 +183,23 @@ public static Task<AssetBundle> LoadAsync(
     string passward = null,
     IVerify verify = null,
     uint crc = 0);
+
+public static AssetBundle LoadWithAes(
+    string protectedPath,
+    Aes aes,
+    IVerify verify = null,
+    byte[] verifyKey = null,
+    uint crc = 0);
+
+public static Task<AssetBundle> LoadAsyncWithAes(
+    string protectedPath,
+    Aes aes,
+    IVerify verify = null,
+    byte[] verifyKey = null,
+    uint crc = 0);
 ```
 
-`LoadAsync` 必须从 Unity 主线程调用；文件校验和解密在工作线程执行，AssetBundle 创建回到主线程。`crc` 为 `0` 时跳过 Unity 的 CRC 检查。
+`LoadAsync`/`LoadAsyncWithAes` 必须从 Unity 主线程调用；文件校验和解密在工作线程执行，AssetBundle 创建回到主线程。调用 `LoadAsyncWithAes` 后，任务完成前不能释放或并发使用该 AES。`crc` 为 `0` 时跳过 Unity 的 CRC 检查。
 
 ### ProtectedFile
 
@@ -137,7 +222,7 @@ public static TResult Read<TResult>(
 
 启用 `Write` 进度报告时，必须通过 `plaintextLength` 提供明文总字节数。传给回调的流由 `ProtectedFile` 管理，回调不应关闭该流。
 
-文件布局为 `[Tag][salt][IV][data]`，未启用的可选部分不会写入。启用 AES 时 `data` 为密文；当前 Tag 校验范围为 `data`。
+密码模式的文件布局为 `[Tag][salt][IV][data]`，直接 AES 模式为 `[Tag][IV][data]`。未启用的可选部分不会写入；启用 AES 时 `data` 为密文。Tag 校验范围包含 salt（若存在）、IV 和 data。
 
 ### ProtectedFileOptions
 
@@ -145,13 +230,18 @@ public static TResult Read<TResult>(
 public sealed class ProtectedFileOptions
 {
     public string EncryptionPassword { get; set; }
+    public Aes EncryptionAes { get; set; }
+    public byte[] VerifyKey { get; set; }
     public IVerify Verify { get; set; }
 }
 ```
 
 - `EncryptionPassword`：`null` 表示不使用 AES 加密。
+- `EncryptionAes`：直接使用调用方提供的 AES，跳过 PBKDF2；不能与 `EncryptionPassword` 同时设置，实例由调用方释放。
+- `VerifyKey`：直接 AES 模式下传给校验器的 Key；底层使用副本，不修改调用方数组。
 - `Verify`：`null` 表示不生成或验证 Tag。
 - 使用 `HMACVerify` 时，PBKDF2-SHA256 从 `EncryptionPassword` 和随机 Salt 派生 64 字节，前 32 字节作为 AES Key，后 32 字节作为 HMAC Key。
+- 直接 AES 模式使用 `HMACVerify` 时，必须另外提供 `VerifyKey`，不要复用 AES Key。
 
 ### IVerify
 
@@ -190,7 +280,7 @@ public class HashVerify : IVerify
 
 ### HMACVerify
 
-基于密钥的 HMAC-SHA256 校验，`TagLength` 为 32 字节。通过上层文件 API 使用时，HMAC Key 自动从 AES 密码派生，无需额外输入校验密码。
+基于密钥的 HMAC-SHA256 校验，`TagLength` 为 32 字节。密码模式下 HMAC Key 自动从 AES 密码派生；直接 AES 模式由调用方通过 `verifyKey`/`VerifyKey` 提供独立 Key。
 
 ```csharp
 public class HMACVerify : IVerify
@@ -236,7 +326,7 @@ public enum FileEncryptStage
 ## 校验方式选择
 
 - `HashVerify`：仅用于检测意外损坏，不提供防篡改能力。
-- `HMACVerify`：使用从 AES 密码派生的独立密钥验证 Salt、IV 和密文，适合需要提高篡改成本的本地文件。
+- `HMACVerify`：使用独立密钥验证 Salt（若存在）、IV 和密文，适合需要提高篡改成本的本地文件。
 - `verify == null`：不写入也不检查 Tag。
 
 ## 安全边界

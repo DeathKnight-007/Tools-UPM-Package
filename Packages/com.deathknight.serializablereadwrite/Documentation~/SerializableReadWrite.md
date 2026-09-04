@@ -13,6 +13,8 @@ using SerializableReadWrite;
 | 参数 | 含义 |
 | --- | --- |
 | `passward` | AES 密码；为 `null` 时不加密 |
+| `aes` | 调用方持有的 AES；使用该模式时跳过 PBKDF2 |
+| `verifyKey` | 直接 AES 模式下传给校验器的独立 Key |
 | `verify` | 校验算法；为 `null` 时不生成或验证 Tag |
 
 使用 `HMACVerify` 时必须提供非空 AES 密码，但不再需要额外的 HMAC 密码。内部通过 PBKDF2-SHA256 派生 64 字节密钥材料：
@@ -25,6 +27,30 @@ Password + Salt
 ```
 
 HMAC 覆盖 `Salt + IV + 密文`，读取时先验证 HMAC，通过后才执行 AES 解密。
+
+若调用方已经持有随机 AES Key，可使用 `*WithAes` API：
+
+```csharp
+using System.Security.Cryptography;
+
+using Aes aes = Aes.Create();
+aes.GenerateKey();
+
+byte[] verifyKey = new byte[32];
+using (RandomNumberGenerator random = RandomNumberGenerator.Create())
+{
+    random.GetBytes(verifyKey);
+}
+
+ObjectSaveRead.SaveWithAes(path, data, aes, new HMACVerify(), verifyKey);
+PlayerData loaded = ObjectSaveRead.ReadWithAes<PlayerData>(
+    path,
+    aes,
+    new HMACVerify(),
+    verifyKey);
+```
+
+此模式不会执行 PBKDF2。底层不会释放或修改调用方 AES；写入时仍会为每份数据生成随机 IV。HMAC 必须使用单独的 `verifyKey`，不能复用 AES Key。
 
 ## 2. 对象读写
 
@@ -112,6 +138,8 @@ Result result = ProtectedFile.Read(
 public sealed class ProtectedFileOptions
 {
     public string EncryptionPassword { get; set; }
+    public Aes EncryptionAes { get; set; }
+    public byte[] VerifyKey { get; set; }
     public IVerify Verify { get; set; }
 }
 ```
@@ -124,7 +152,7 @@ public sealed class ProtectedFileOptions
 - `HMACVerify`：HMAC-SHA256，使用自动派生的 HMAC Key 检测主动篡改。
 - 自定义 `IVerify`：上层启用 AES 时会收到自动派生的后 32 字节 Key；未启用 AES 时 Key 为 `null`。
 
-`HMACVerify` 不允许在缺少 `EncryptionPassword` 时通过文件 API 使用。
+`EncryptionPassword` 与 `EncryptionAes` 互斥。`HMACVerify` 在密码模式下使用派生 Key，在直接 AES 模式下要求提供独立的 `VerifyKey`。
 
 ## 7. AssetBundle
 
@@ -141,13 +169,15 @@ AssetBundle bundle = await AssetBundleLoader.LoadAsync(
 ## 8. 文件格式
 
 ```text
-[Tag][Salt][IV][Data]
+密码模式：   [Tag][Salt][IV][Data]
+直接 AES：   [Tag][IV][Data]
+不加密：     [Tag][Data]
 ```
 
 - 启用 AES 时，`Data` 是密文。
-- 启用 HMAC 时，`Tag = HMAC-SHA256(HMAC Key, Salt || IV || Data)`。
+- 启用 HMAC 时，`Tag = HMAC-SHA256(HMAC Key, Salt? || IV? || Data)`。
 - Salt 和 IV 不需要保密，但受到 HMAC 保护。
-- 读取与写入必须使用相同密码和校验器。
+- 读取与写入必须使用相同模式、AES Key/密码、AES 配置和校验器。
 
 ## 9. 升级说明
 

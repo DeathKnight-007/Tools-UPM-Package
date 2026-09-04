@@ -1,0 +1,173 @@
+{
+  "input": "E:\\QQCache\\\u62db\u52df\u6d3b\u52a8\u6280\u672f\u8bbe\u8ba1\u6587\u6863_V2.0_\u524d\u7aef\u540c\u6b65\u7248.docx",
+  "fonts_by_char_count": {
+    "\u7b49\u7ebf": 8215,
+    "Consolas": 1575,
+    "Aptos": 34,
+    "Aptos Display": 32
+  },
+  "direct_run_formatting_runs": 525,
+  "direct_paragraph_formatting_paragraphs": 549,
+  "heading_like_paragraphs_not_heading_style": [
+    {
+      "para_index": 1,
+      "text": "TECHNICAL DESIGN / FRONTEND SYNC",
+      "style": "Normal"
+    },
+    {
+      "para_index": 2,
+      "text": "\u65b0\u7248\u6d3b\u52a8\u62db\u52df\u6280\u672f\u8bbe\u8ba1\u6587\u6863",
+      "style": "Normal"
+    },
+    {
+      "para_index": 110,
+      "text": "\u6587\u6863\u9879",
+      "style": "Normal"
+    },
+    {
+      "para_index": 111,
+      "text": "\u5185\u5bb9",
+      "style": "Normal"
+    },
+    {
+      "para_index": 125,
+      "text": "\u4e3b\u9898",
+      "style": "Normal"
+    },
+    {
+      "para_index": 126,
+      "text": "\u65e7\u7a3f",
+      "style": "Normal"
+    },
+    {
+      "para_index": 127,
+      "text": "V2.0 \u5f53\u524d\u7ed3\u8bba",
+      "style": "Normal"
+    },
+    {
+      "para_index": 149,
+      "text": "\u7981\u6b62\u786c\u7f16\u7801  \u4e0b\u8868\u662f\u5f53\u524d\u8054\u8c03\u5feb\u7167\uff0c\u4e0d\u662f\u534f\u8bae\u5e38\u91cf\u3002\u6d3b\u52a8ID\u3001\u5361\u6c60\u5217\u8868\u3001\u5927\u5956\u3001\u6d88\u8017\u3001\u4fdd\u5e95\u6b21\u6570\u3001\u5468\u671f\u6b21\u6570\u3001\u79ef\u5206\u548c\u5c55\u793a\u7269\u54c1\u5747\u5e94\u8bfb\u53d6\u914d\u7f6e\u3002",
+      "style": "Normal"
+    },
+    {
+      "para_index": 150,
+      "text": "\u9879\u76ee",
+      "style": "Normal"
+    },
+    {
+      "para_index": 151,
+      "text": "\u5f53\u524d\u503c",
+      "style": "Normal"
+    },
+    {
+      "para_index": 152,
+      "text": "\u524d\u7aef\u6765\u6e90",
+      "style": "Normal"
+    },
+    {
+      "para_index": 177,
+      "text": "\u5361\u6c60ID",
+      "style": "Normal"
+    },
+    {
+      "para_index": 178,
+      "text": "\u666e\u901a\u5956\u52b1\u7ec4",
+      "style": "Normal"
+    },
+    {
+      "para_index": 179,
+      "text": "\u5927\u5956",
+      "style": "Normal"
+    },
+    {
+      "para_index": 180,
+      "text": "\u4fdd\u5e95\u5956\u52b1\u7ec4",
+      "style": "Normal"
+    },
+    {
+      "para_index": 181,
+      "text": "\u4fdd\u5e95",
+      "style": "Normal"
+    },
+    {
+      "para_index": 182,
+      "text": "\u5468\u671f\u5956\u52b1\u7ec4",
+      "style": "Normal"
+    },
+    {
+      "para_index": 183,
+      "text": "\u5468\u671f",
+      "style": "Normal"
+    },
+    {
+      "para_index": 184,
+      "text": "\u5355\u62bd/\u5341\u62bd\u6d88\u8017",
+      "style": "Normal"
+    },
+    {
+      "para_index": 209,
+      "text": "\u6570\u636e\u7c7b\u522b",
+      "style": "Normal"
+    }
+  ],
+  "examples": {
+    "direct_paragraph_formatting": [
+      {
+        "para_index": 1,
+        "text": "TECHNICAL DESIGN / FRONTEND SYNC",
+        "style": "Normal"
+      },
+      {
+        "para_index": 2,
+        "text": "\u65b0\u7248\u6d3b\u52a8\u62db\u52df\u6280\u672f\u8bbe\u8ba1\u6587\u6863",
+        "style": "Normal"
+      },
+      {
+        "para_index": 3,
+        "text": "\u524d\u540e\u7aef\u540c\u6b65\u7248 \u00b7 \u534f\u8bae\u590d\u7528\u3001\u52a8\u6001\u72b6\u6001\u3001\u5c55\u793a\u63a8\u5bfc\u4e0e\u8054\u8c03\u9a8c\u6536",
+        "style": "Normal"
+      },
+      {
+        "para_index": 4,
+        "text": "",
+        "style": "Normal"
+      },
+      {
+        "para_index": 5,
+        "text": "",
+        "style": "Normal"
+      }
+    ],
+    "direct_run_formatting": [
+      {
+        "para_index": 1,
+        "run_text": "TECHNICAL DESIGN / FRONTEND SYNC",
+        "style": "Normal"
+      },
+      {
+        "para_index": 2,
+        "run_text": "\u65b0\u7248\u6d3b\u52a8\u62db\u52df\u6280\u672f\u8bbe\u8ba1\u6587\u6863",
+        "style": "Normal"
+      },
+      {
+        "para_index": 3,
+        "run_text": "\u524d\u540e\u7aef\u540c\u6b65\u7248 \u00b7 \u534f\u8bae\u590d\u7528\u3001\u52a8\u6001\u72b6\u6001\u3001\u5c55\u793a\u63a8\u5bfc\u4e0e\u8054\u8c03\u9a8c\u6536",
+        "style": "Normal"
+      },
+      {
+        "para_index": 9,
+        "run_text": "\u5927\u5956\u9009\u62e9\u540e\u4fdd\u6301\u4e0d\u53d8\uff0c\u53ea\u6709\u7528\u6237\u624b\u52a8\u5207\u6362\u65f6\u624d\u53d8\u5316\uff1b\u62bd\u5230\u5927\u5956\u4e0d\u4f1a\u81ea\u52a8\u5207\u6362\u3002",
+        "style": "List Bullet"
+      },
+      {
+        "para_index": 10,
+        "run_text": "\u6d3b\u52a8\u9996\u6b21\u521d\u59cb\u5316\u6216\u91cd\u7f6e\u65f6\uff0c\u9ed8\u8ba4\u9009\u4e2d\u6d3b\u52a8 newrecruitid \u5217\u8868\u7b2c\u4e00\u6761\u3002\u6d3b\u52a81600\u9ed8\u8ba4\u5361\u6c604\uff0c\u5bf9\u5e94\u5927\u59561322\u3002",
+        "style": "List Bullet"
+      }
+    ]
+  },
+  "notes": [
+    "Direct formatting is not always wrong, but it often causes inconsistent output when templates change.",
+    "Heading-like paragraphs not using Heading styles can break TOC and accessibility."
+  ]
+}

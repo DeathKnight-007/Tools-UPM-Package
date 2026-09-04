@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "com.deathknight.filearchive": "file:../../Packages/com.deathknight.filearchive",
+    "com.deathknight.net": "file:../../Packages/com.deathknight.net",
     "com.deathknight.serializablereadwrite": "file:../../Packages/com.deathknight.serializablereadwrite",
     "com.gamelovers.mcp-unity": "https://github.com/CoderGamester/mcp-unity.git#1.3.0",
     "com.unity.collab-proxy": "2.12.4",
@@ -43,6 +44,7 @@
   },
   "testables": [
     "com.deathknight.filearchive",
+    "com.deathknight.net",
     "com.deathknight.serializablereadwrite"
   ]
 }

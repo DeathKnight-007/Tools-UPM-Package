@@ -1,4 +1,6 @@
+using System;
 using System.IO;
+using System.Security.Cryptography;
 using System.Text;
 using Newtonsoft.Json;
 
@@ -29,25 +31,7 @@ namespace SerializableReadWrite
             // 3、流式加密
             ProtectedFile.Write(
                 path,
-                plaintextStream =>
-                {
-                    using (StreamWriter sw = new StreamWriter(
-                        plaintextStream,
-                        new UTF8Encoding(false),
-                        1024 * 16,
-                        true))
-                    using (JsonTextWriter jw = new JsonTextWriter(sw))
-                    {
-                        // 底层明文流属于 ProtectedFile，JSON 层只能刷新，不能关闭它。
-                        jw.CloseOutput = false;
-
-                        JsonSerializer serializer = new JsonSerializer();
-                        serializer.Serialize(jw, data);
-
-                        jw.Flush();
-                        sw.Flush();
-                    }
-                },
+                plaintextStream => SerializeJson(plaintextStream, data),
                 CreateOptions(passward, verify));
         }
 
@@ -58,24 +42,76 @@ namespace SerializableReadWrite
         {
             return ProtectedFile.Read(
                 path,
-                plaintextStream =>
-                {
-                    using (StreamReader sr = new StreamReader(
-                        plaintextStream,
-                        Encoding.UTF8,
-                        false,
-                        1024 * 16,
-                        true))
-                    using (JsonTextReader jr = new JsonTextReader(sr))
-                    {
-                        // 底层明文流属于 ProtectedFile，JSON 层不能关闭它。
-                        jr.CloseInput = false;
-
-                        JsonSerializer serializer = new JsonSerializer();
-                        return serializer.Deserialize<T>(jr);
-                    }
-                },
+                plaintextStream => DeserializeJson<T>(plaintextStream),
                 CreateOptions(passward, verify));
+        }
+
+        /// <summary>
+        /// 使用调用方提供的 AES 保存对象，不执行密码密钥派生。
+        /// AES 的释放由调用方负责；使用 HMACVerify 时必须提供独立的 verifyKey。
+        /// </summary>
+        public static void SaveWithAes<T>(
+            string path,
+            T data,
+            Aes aes,
+            IVerify verify = null,
+            byte[] verifyKey = null)
+        {
+            ProtectedFile.Write(
+                path,
+                plaintextStream => SerializeJson(plaintextStream, data),
+                CreateOptions(aes, verify, verifyKey));
+        }
+
+        /// <summary>
+        /// 使用调用方提供的 AES 读取对象，不执行密码密钥派生。
+        /// </summary>
+        public static T ReadWithAes<T>(
+            string path,
+            Aes aes,
+            IVerify verify = null,
+            byte[] verifyKey = null)
+        {
+            return ProtectedFile.Read(
+                path,
+                plaintextStream => DeserializeJson<T>(plaintextStream),
+                CreateOptions(aes, verify, verifyKey));
+        }
+
+        private static void SerializeJson<T>(Stream plaintextStream, T data)
+        {
+            using (StreamWriter sw = new StreamWriter(
+                plaintextStream,
+                new UTF8Encoding(false),
+                1024 * 16,
+                true))
+            using (JsonTextWriter jw = new JsonTextWriter(sw))
+            {
+                jw.CloseOutput = false;
+
+                JsonSerializer serializer = new JsonSerializer();
+                serializer.Serialize(jw, data);
+
+                jw.Flush();
+                sw.Flush();
+            }
+        }
+
+        private static T DeserializeJson<T>(Stream plaintextStream)
+        {
+            using (StreamReader sr = new StreamReader(
+                plaintextStream,
+                Encoding.UTF8,
+                false,
+                1024 * 16,
+                true))
+            using (JsonTextReader jr = new JsonTextReader(sr))
+            {
+                jr.CloseInput = false;
+
+                JsonSerializer serializer = new JsonSerializer();
+                return serializer.Deserialize<T>(jr);
+            }
         }
 
         private static ProtectedFileOptions CreateOptions(
@@ -86,6 +122,22 @@ namespace SerializableReadWrite
             {
                 EncryptionPassword = passward,
                 Verify = verify
+            };
+        }
+
+        private static ProtectedFileOptions CreateOptions(
+            Aes aes,
+            IVerify verify,
+            byte[] verifyKey)
+        {
+            if (aes == null)
+                throw new ArgumentNullException(nameof(aes));
+
+            return new ProtectedFileOptions
+            {
+                EncryptionAes = aes,
+                Verify = verify,
+                VerifyKey = verifyKey
             };
         }
     }

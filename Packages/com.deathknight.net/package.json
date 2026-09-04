@@ -1,0 +1,14 @@
+{
+  "name": "com.deathknight.net",
+  "version": "0.1.0",
+  "displayName": "DeathKnight Net",
+  "description": "Networking utilities for Unity projects.",
+  "unity": "2022.3",
+  "keywords": [
+    "network",
+    "networking"
+  ],
+  "author": {
+    "name": "DeathKnight-007"
+  }
+}

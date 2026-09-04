@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | `com.deathknight.serializablereadwrite` | 序列化、文件加密、完整性校验与受保护 AssetBundle 加载 | 0.1.0 |
 | `com.deathknight.filearchive` | ZIP 压缩、安全解压与进度报告 | 0.1.0 |
+| `com.deathknight.net` | Unity 网络工具开发包 | 0.1.0 |
 
 ## Git 安装
 
@@ -15,6 +16,10 @@ https://github.com/DeathKnight-007/Tools-UPM-Package.git?path=/Packages/com.deat
 
 ```text
 https://github.com/DeathKnight-007/Tools-UPM-Package.git?path=/Packages/com.deathknight.filearchive
+```
+
+```text
+https://github.com/DeathKnight-007/Tools-UPM-Package.git?path=/Packages/com.deathknight.net
 ```
 
 ## 开发
