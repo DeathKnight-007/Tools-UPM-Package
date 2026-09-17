@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Security.Cryptography;
+using System.Threading;
+using System.Threading.Tasks;
 using static SerializableReadWrite.IEncrypt;
 
 namespace SerializableReadWrite
@@ -18,6 +20,7 @@ namespace SerializableReadWrite
         private const int Pbkdf2Iterations = 100000;
 
         private readonly Aes aes;
+        private readonly SemaphoreSlim operationLock = new SemaphoreSlim(1, 1);
         private bool disposed;
 
         public AesEncrypt(EncryptConfig config)
@@ -40,7 +43,6 @@ namespace SerializableReadWrite
             }
 
             Config = config;
-
             aes = Aes.Create();
             aes.Mode = CipherMode.CBC;
             aes.Padding = PaddingMode.PKCS7;
@@ -50,94 +52,58 @@ namespace SerializableReadWrite
 
         public void Encrypt(Stream contentStream, Stream encryptStream)
         {
+            EncryptAsync(contentStream, encryptStream)
+                .GetAwaiter()
+                .GetResult();
+        }
+
+        public async Task EncryptAsync(
+            Stream contentStream,
+            Stream encryptStream,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
             ThrowIfDisposed();
+            ValidateEncryptStreams(contentStream, encryptStream);
 
-            if (contentStream == null)
-                throw new ArgumentNullException(nameof(contentStream));
-            if (encryptStream == null)
-                throw new ArgumentNullException(nameof(encryptStream));
-            if (!contentStream.CanRead)
-                throw new ArgumentException("明文输入流必须可读", nameof(contentStream));
-            if (!encryptStream.CanWrite)
-                throw new ArgumentException("加密输出流必须可写", nameof(encryptStream));
-            if (ReferenceEquals(contentStream, encryptStream))
-                throw new ArgumentException("输入流和输出流不能是同一个实例");
-
-            if (!encryptStream.CanRead || !encryptStream.CanSeek)
-            {
-                throw new ArgumentException(
-                    "加密输出流必须可读且可定位",
-                    nameof(encryptStream));
-            }
-
-            int tagLength = Config.Verify.TagLength;
-            long recordStart = encryptStream.Position;
-            encryptStream.Write(new byte[tagLength], 0, tagLength);
-            long authenticatedDataStart = encryptStream.Position;
-
-            byte[] salt = GenerateRandomBytes(SaltLength);
-            byte[] encryptionKey = null;
-            byte[] verificationKey = null;
-
+            await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                DeriveKeys(
-                    Config.SimplePassword,
-                    salt,
-                    out encryptionKey,
-                    out verificationKey);
-
-                encryptStream.Write(salt, 0, salt.Length);
-
-                aes.Key = encryptionKey;
-                aes.GenerateIV();
-
-                byte[] iv = aes.IV;
-                encryptStream.Write(iv, 0, iv.Length);
-
-                using (ICryptoTransform encryptor = aes.CreateEncryptor())
-                using (CryptoStream cryptoStream = new CryptoStream(
+                ThrowIfDisposed();
+                await EncryptCoreAsync(
+                    contentStream,
                     encryptStream,
-                    encryptor,
-                    CryptoStreamMode.Write,
-                    leaveOpen: true))
-                {
-                    contentStream.CopyTo(cryptoStream);
-                    cryptoStream.FlushFinalBlock();
-                }
-
-                long recordEnd = encryptStream.Position;
-                encryptStream.Position = authenticatedDataStart;
-
-                byte[] tag = Config.Verify.ComputeTag(
-                    encryptStream,
-                    Config.Verify.NeedPassword ? verificationKey : null);
-
-                if (tag == null || tag.Length != tagLength)
-                {
-                    throw new InvalidDataException(
-                        "校验算法返回的 Tag 长度与 TagLength 不一致");
-                }
-
-                encryptStream.Position = recordStart;
-                encryptStream.Write(tag, 0, tag.Length);
-                encryptStream.Position = recordEnd;
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
             }
             finally
             {
-                ClearKey(encryptionKey);
-                ClearKey(verificationKey);
+                operationLock.Release();
             }
         }
 
         public byte[] Encrypt(Stream contentStream)
+        {
+            return EncryptAsync(contentStream)
+                .GetAwaiter()
+                .GetResult();
+        }
+
+        public async Task<byte[]> EncryptAsync(
+            Stream contentStream,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
         {
             if (contentStream == null)
                 throw new ArgumentNullException(nameof(contentStream));
 
             using (var encryptStream = new MemoryStream())
             {
-                Encrypt(contentStream, encryptStream);
+                await EncryptAsync(
+                    contentStream,
+                    encryptStream,
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
                 return encryptStream.ToArray();
             }
         }
@@ -146,6 +112,19 @@ namespace SerializableReadWrite
             byte[] contentBuffer,
             int contentOffset,
             int contentCount)
+        {
+            return EncryptAsync(
+                contentBuffer,
+                contentOffset,
+                contentCount).GetAwaiter().GetResult();
+        }
+
+        public async Task<byte[]> EncryptAsync(
+            byte[] contentBuffer,
+            int contentOffset,
+            int contentCount,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
         {
             ValidateSegment(
                 contentBuffer,
@@ -159,7 +138,10 @@ namespace SerializableReadWrite
                 contentCount,
                 writable: false))
             {
-                return Encrypt(contentStream);
+                return await EncryptAsync(
+                    contentStream,
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -180,13 +162,7 @@ namespace SerializableReadWrite
                 encryptOffset,
                 result.Length,
                 nameof(encryptBuffer));
-
-            Buffer.BlockCopy(
-                result,
-                0,
-                encryptBuffer,
-                encryptOffset,
-                result.Length);
+            Buffer.BlockCopy(result, 0, encryptBuffer, encryptOffset, result.Length);
             return result.Length;
         }
 
@@ -203,114 +179,70 @@ namespace SerializableReadWrite
                 encryptOffset,
                 nameof(encryptBuffer));
 
-            byte[] result = Encrypt(
-                contentBuffer,
-                contentOffset,
-                contentCount);
+            byte[] result = Encrypt(contentBuffer, contentOffset, contentCount);
             EnsureDestinationCapacity(
                 encryptBuffer,
                 encryptOffset,
                 result.Length,
                 nameof(encryptBuffer));
-
-            Buffer.BlockCopy(
-                result,
-                0,
-                encryptBuffer,
-                encryptOffset,
-                result.Length);
+            Buffer.BlockCopy(result, 0, encryptBuffer, encryptOffset, result.Length);
             return result.Length;
         }
 
         public void Decrypt(Stream encryptStream, Stream contentStream)
         {
+            DecryptAsync(encryptStream, contentStream)
+                .GetAwaiter()
+                .GetResult();
+        }
+
+        public async Task DecryptAsync(
+            Stream encryptStream,
+            Stream contentStream,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
             ThrowIfDisposed();
+            ValidateDecryptStreams(encryptStream, contentStream);
 
-            if (encryptStream == null)
-                throw new ArgumentNullException(nameof(encryptStream));
-            if (contentStream == null)
-                throw new ArgumentNullException(nameof(contentStream));
-            if (!encryptStream.CanRead)
-                throw new ArgumentException("加密输入流必须可读", nameof(encryptStream));
-            if (!contentStream.CanWrite)
-                throw new ArgumentException("明文输出流必须可写", nameof(contentStream));
-            if (ReferenceEquals(encryptStream, contentStream))
-                throw new ArgumentException("输入流和输出流不能是同一个实例");
-
-            if (!encryptStream.CanSeek)
-            {
-                throw new ArgumentException(
-                    "加密输入流必须可定位",
-                    nameof(encryptStream));
-            }
-
-            byte[] tag = new byte[Config.Verify.TagLength];
-            ReadExactly(encryptStream, tag, 0, tag.Length);
-            long authenticatedDataStart = encryptStream.Position;
-
-            byte[] salt = new byte[SaltLength];
-            byte[] iv = new byte[IvLength];
-            byte[] encryptionKey = null;
-            byte[] verificationKey = null;
-
+            await operationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                ReadExactly(encryptStream, salt, 0, salt.Length);
-                DeriveKeys(
-                    Config.SimplePassword,
-                    salt,
-                    out encryptionKey,
-                    out verificationKey);
-
-                ReadExactly(encryptStream, iv, 0, iv.Length);
-                long ciphertextStart = encryptStream.Position;
-                long ciphertextLength = encryptStream.Length - ciphertextStart;
-                if (ciphertextLength <= 0 || ciphertextLength % IvLength != 0)
-                {
-                    throw new InvalidDataException(
-                        "AES 密文长度必须是非零的 16 字节倍数");
-                }
-
-                encryptStream.Position = authenticatedDataStart;
-
-                bool valid = Config.Verify.VerifyTag(
+                ThrowIfDisposed();
+                await DecryptCoreAsync(
                     encryptStream,
-                    tag,
-                    Config.Verify.NeedPassword ? verificationKey : null);
-
-                if (!valid)
-                    throw new InvalidDataException("加密数据完整性校验不通过");
-
-                encryptStream.Position = ciphertextStart;
-
-                aes.Key = encryptionKey;
-                aes.IV = iv;
-
-                using (ICryptoTransform decryptor = aes.CreateDecryptor())
-                using (CryptoStream cryptoStream = new CryptoStream(
-                    encryptStream,
-                    decryptor,
-                    CryptoStreamMode.Read,
-                    leaveOpen: true))
-                {
-                    cryptoStream.CopyTo(contentStream);
-                }
+                    contentStream,
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
             }
             finally
             {
-                ClearKey(encryptionKey);
-                ClearKey(verificationKey);
+                operationLock.Release();
             }
         }
 
         public byte[] Decrypt(Stream encryptStream)
+        {
+            return DecryptAsync(encryptStream)
+                .GetAwaiter()
+                .GetResult();
+        }
+
+        public async Task<byte[]> DecryptAsync(
+            Stream encryptStream,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
         {
             if (encryptStream == null)
                 throw new ArgumentNullException(nameof(encryptStream));
 
             using (var contentStream = new MemoryStream())
             {
-                Decrypt(encryptStream, contentStream);
+                await DecryptAsync(
+                    encryptStream,
+                    contentStream,
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
                 return contentStream.ToArray();
             }
         }
@@ -319,6 +251,19 @@ namespace SerializableReadWrite
             byte[] encryptBuffer,
             int encryptOffset,
             int encryptCount)
+        {
+            return DecryptAsync(
+                encryptBuffer,
+                encryptOffset,
+                encryptCount).GetAwaiter().GetResult();
+        }
+
+        public async Task<byte[]> DecryptAsync(
+            byte[] encryptBuffer,
+            int encryptOffset,
+            int encryptCount,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
         {
             ValidateSegment(
                 encryptBuffer,
@@ -332,7 +277,10 @@ namespace SerializableReadWrite
                 encryptCount,
                 writable: false))
             {
-                return Decrypt(encryptStream);
+                return await DecryptAsync(
+                    encryptStream,
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -352,13 +300,7 @@ namespace SerializableReadWrite
                 contentOffset,
                 result.Length,
                 nameof(contentBuffer));
-
-            Buffer.BlockCopy(
-                result,
-                0,
-                contentBuffer,
-                contentOffset,
-                result.Length);
+            Buffer.BlockCopy(result, 0, contentBuffer, contentOffset, result.Length);
             return result.Length;
         }
 
@@ -374,22 +316,13 @@ namespace SerializableReadWrite
                 contentOffset,
                 nameof(contentBuffer));
 
-            byte[] result = Decrypt(
-                encryptBuffer,
-                encryptOffset,
-                encryptCount);
+            byte[] result = Decrypt(encryptBuffer, encryptOffset, encryptCount);
             EnsureDestinationCapacity(
                 contentBuffer,
                 contentOffset,
                 result.Length,
                 nameof(contentBuffer));
-
-            Buffer.BlockCopy(
-                result,
-                0,
-                contentBuffer,
-                contentOffset,
-                result.Length);
+            Buffer.BlockCopy(result, 0, contentBuffer, contentOffset, result.Length);
             return result.Length;
         }
 
@@ -398,16 +331,221 @@ namespace SerializableReadWrite
             if (disposed)
                 return;
 
-            aes.Dispose();
             disposed = true;
+            aes.Dispose();
+            operationLock.Dispose();
             GC.SuppressFinalize(this);
         }
 
-        private static void DeriveKeys(
+        private async Task EncryptCoreAsync(
+            Stream contentStream,
+            Stream encryptStream,
+            IProgress<ReadWriteProgress> progress,
+            CancellationToken cancellationToken)
+        {
+            int tagLength = Config.Verify.TagLength;
+            long recordStart = encryptStream.Position;
+            await encryptStream.WriteAsync(
+                new byte[tagLength],
+                0,
+                tagLength,
+                cancellationToken).ConfigureAwait(false);
+            long authenticatedDataStart = encryptStream.Position;
+
+            byte[] salt = GenerateRandomBytes(SaltLength);
+            byte[] encryptionKey = null;
+            byte[] verificationKey = null;
+
+            try
+            {
+                DerivedKeys keys = await DeriveKeysAsync(
+                    Config.SimplePassword,
+                    salt,
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
+                encryptionKey = keys.EncryptionKey;
+                verificationKey = keys.VerificationKey;
+
+                await encryptStream.WriteAsync(
+                    salt,
+                    0,
+                    salt.Length,
+                    cancellationToken).ConfigureAwait(false);
+
+                aes.Key = encryptionKey;
+                aes.GenerateIV();
+                byte[] iv = aes.IV;
+
+                await encryptStream.WriteAsync(
+                    iv,
+                    0,
+                    iv.Length,
+                    cancellationToken).ConfigureAwait(false);
+
+                long plaintextLength = AsyncStreamProgress.GetRemainingLength(contentStream);
+                using (ICryptoTransform encryptor = aes.CreateEncryptor())
+                using (CryptoStream cryptoStream = new CryptoStream(
+                    encryptStream,
+                    encryptor,
+                    CryptoStreamMode.Write,
+                    leaveOpen: true))
+                {
+                    await AsyncStreamProgress.CopyToAsync(
+                        contentStream,
+                        cryptoStream,
+                        ReadWriteStage.Encrypting,
+                        progress,
+                        cancellationToken,
+                        plaintextLength).ConfigureAwait(false);
+                    cryptoStream.FlushFinalBlock();
+                }
+
+                await encryptStream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                long recordEnd = encryptStream.Position;
+                encryptStream.Position = authenticatedDataStart;
+
+                byte[] tag = await Config.Verify.ComputeTagAsync(
+                    encryptStream,
+                    Config.Verify.NeedPassword ? verificationKey : null,
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
+
+                if (tag == null || tag.Length != tagLength)
+                {
+                    throw new InvalidDataException(
+                        "校验算法返回的 Tag 长度与 TagLength 不一致");
+                }
+
+                encryptStream.Position = recordStart;
+                await encryptStream.WriteAsync(
+                    tag,
+                    0,
+                    tag.Length,
+                    cancellationToken).ConfigureAwait(false);
+                encryptStream.Position = recordEnd;
+            }
+            finally
+            {
+                ClearKey(encryptionKey);
+                ClearKey(verificationKey);
+            }
+        }
+
+        private async Task DecryptCoreAsync(
+            Stream encryptStream,
+            Stream contentStream,
+            IProgress<ReadWriteProgress> progress,
+            CancellationToken cancellationToken)
+        {
+            byte[] tag = new byte[Config.Verify.TagLength];
+            await ReadExactlyAsync(
+                encryptStream,
+                tag,
+                0,
+                tag.Length,
+                cancellationToken).ConfigureAwait(false);
+            long authenticatedDataStart = encryptStream.Position;
+
+            byte[] salt = new byte[SaltLength];
+            byte[] iv = new byte[IvLength];
+            byte[] encryptionKey = null;
+            byte[] verificationKey = null;
+
+            try
+            {
+                await ReadExactlyAsync(
+                    encryptStream,
+                    salt,
+                    0,
+                    salt.Length,
+                    cancellationToken).ConfigureAwait(false);
+
+                DerivedKeys keys = await DeriveKeysAsync(
+                    Config.SimplePassword,
+                    salt,
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
+                encryptionKey = keys.EncryptionKey;
+                verificationKey = keys.VerificationKey;
+
+                await ReadExactlyAsync(
+                    encryptStream,
+                    iv,
+                    0,
+                    iv.Length,
+                    cancellationToken).ConfigureAwait(false);
+
+                long ciphertextStart = encryptStream.Position;
+                long ciphertextLength = encryptStream.Length - ciphertextStart;
+                if (ciphertextLength <= 0 || ciphertextLength % IvLength != 0)
+                {
+                    throw new InvalidDataException(
+                        "AES 密文长度必须是非零的 16 字节倍数");
+                }
+
+                encryptStream.Position = authenticatedDataStart;
+                bool valid = await Config.Verify.VerifyTagAsync(
+                    encryptStream,
+                    tag,
+                    Config.Verify.NeedPassword ? verificationKey : null,
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
+
+                if (!valid)
+                    throw new InvalidDataException("加密数据完整性校验不通过");
+
+                encryptStream.Position = ciphertextStart;
+                aes.Key = encryptionKey;
+                aes.IV = iv;
+
+                using (ICryptoTransform decryptor = aes.CreateDecryptor())
+                using (CryptoStream cryptoStream = new CryptoStream(
+                    encryptStream,
+                    decryptor,
+                    CryptoStreamMode.Read,
+                    leaveOpen: true))
+                {
+                    await AsyncStreamProgress.CopyToAsync(
+                        cryptoStream,
+                        contentStream,
+                        ReadWriteStage.Decrypting,
+                        progress,
+                        cancellationToken,
+                        ciphertextLength).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                ClearKey(encryptionKey);
+                ClearKey(verificationKey);
+            }
+        }
+
+        private static async Task<DerivedKeys> DeriveKeysAsync(
             string password,
             byte[] salt,
-            out byte[] encryptionKey,
-            out byte[] verificationKey)
+            IProgress<ReadWriteProgress> progress,
+            CancellationToken cancellationToken)
+        {
+            AsyncStreamProgress.Report(
+                progress,
+                ReadWriteStage.DerivingKey,
+                0,
+                1);
+
+            DerivedKeys keys = await Task.Run(
+                () => DeriveKeys(password, salt),
+                cancellationToken).ConfigureAwait(false);
+
+            AsyncStreamProgress.Report(
+                progress,
+                ReadWriteStage.DerivingKey,
+                1,
+                1);
+            return keys;
+        }
+
+        private static DerivedKeys DeriveKeys(string password, byte[] salt)
         {
             using (var derive = new Rfc2898DeriveBytes(
                 password,
@@ -418,8 +556,8 @@ namespace SerializableReadWrite
                 byte[] keyMaterial = derive.GetBytes(KeyLength * 2);
                 try
                 {
-                    encryptionKey = new byte[KeyLength];
-                    verificationKey = new byte[KeyLength];
+                    var encryptionKey = new byte[KeyLength];
+                    var verificationKey = new byte[KeyLength];
                     Buffer.BlockCopy(
                         keyMaterial,
                         0,
@@ -432,6 +570,7 @@ namespace SerializableReadWrite
                         verificationKey,
                         0,
                         KeyLength);
+                    return new DerivedKeys(encryptionKey, verificationKey);
                 }
                 finally
                 {
@@ -451,21 +590,63 @@ namespace SerializableReadWrite
             return bytes;
         }
 
-        private static void ReadExactly(
+        private static async Task ReadExactlyAsync(
             Stream stream,
             byte[] buffer,
             int offset,
-            int count)
+            int count,
+            CancellationToken cancellationToken)
         {
             while (count > 0)
             {
-                int readCount = stream.Read(buffer, offset, count);
+                int readCount = await stream.ReadAsync(
+                    buffer,
+                    offset,
+                    count,
+                    cancellationToken).ConfigureAwait(false);
+
                 if (readCount == 0)
                     throw new EndOfStreamException("加密数据提前结束");
 
                 offset += readCount;
                 count -= readCount;
             }
+        }
+
+        private static void ValidateEncryptStreams(
+            Stream contentStream,
+            Stream encryptStream)
+        {
+            if (contentStream == null)
+                throw new ArgumentNullException(nameof(contentStream));
+            if (encryptStream == null)
+                throw new ArgumentNullException(nameof(encryptStream));
+            if (!contentStream.CanRead)
+                throw new ArgumentException("明文输入流必须可读", nameof(contentStream));
+            if (!encryptStream.CanWrite || !encryptStream.CanRead || !encryptStream.CanSeek)
+            {
+                throw new ArgumentException(
+                    "加密输出流必须可读、可写且可定位",
+                    nameof(encryptStream));
+            }
+            if (ReferenceEquals(contentStream, encryptStream))
+                throw new ArgumentException("输入流和输出流不能是同一个实例");
+        }
+
+        private static void ValidateDecryptStreams(
+            Stream encryptStream,
+            Stream contentStream)
+        {
+            if (encryptStream == null)
+                throw new ArgumentNullException(nameof(encryptStream));
+            if (contentStream == null)
+                throw new ArgumentNullException(nameof(contentStream));
+            if (!encryptStream.CanRead || !encryptStream.CanSeek)
+                throw new ArgumentException("加密输入流必须可读且可定位", nameof(encryptStream));
+            if (!contentStream.CanWrite)
+                throw new ArgumentException("明文输出流必须可写", nameof(contentStream));
+            if (ReferenceEquals(encryptStream, contentStream))
+                throw new ArgumentException("输入流和输出流不能是同一个实例");
         }
 
         private static void ValidateSegment(
@@ -517,6 +698,18 @@ namespace SerializableReadWrite
         {
             if (disposed)
                 throw new ObjectDisposedException(nameof(AesEncrypt));
+        }
+
+        private readonly struct DerivedKeys
+        {
+            public DerivedKeys(byte[] encryptionKey, byte[] verificationKey)
+            {
+                EncryptionKey = encryptionKey;
+                VerificationKey = verificationKey;
+            }
+
+            public byte[] EncryptionKey { get; }
+            public byte[] VerificationKey { get; }
         }
     }
 }

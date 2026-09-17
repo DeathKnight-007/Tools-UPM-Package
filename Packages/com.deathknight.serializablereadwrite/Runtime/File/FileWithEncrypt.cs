@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace SerializableReadWrite
 {
@@ -38,6 +40,31 @@ namespace SerializableReadWrite
         }
 
         /// <summary>
+        /// 异步读取加密文件，并将解密后的完整内容返回到内存。
+        /// </summary>
+        public async Task<byte[]> ReadEncryptFileAsync(
+            string sourcePath,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            ValidateSourcePath(sourcePath);
+
+            using (var sourceStream = new FileStream(
+                sourcePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                FileBufferSize,
+                true))
+            {
+                return await Encrypt.DecryptAsync(
+                    sourceStream,
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>
         /// 读取加密文件，并将解密后的内容写入目标文件。
         /// 目标文件已存在时会被覆盖。
         /// </summary>
@@ -65,6 +92,41 @@ namespace SerializableReadWrite
         }
 
         /// <summary>
+        /// 异步读取加密文件，并将解密后的内容写入目标文件。
+        /// 目标文件已存在时会被覆盖。
+        /// </summary>
+        public async Task ReadEncryptFileAsync(
+            string sourcePath,
+            string destinationPath,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            EnsureDifferentPaths(sourcePath, destinationPath);
+
+            using (var sourceStream = new FileStream(
+                sourcePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                FileBufferSize,
+                true))
+            using (var destinationStream = new FileStream(
+                destinationPath,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.None,
+                FileBufferSize,
+                true))
+            {
+                await Encrypt.DecryptAsync(
+                    sourceStream,
+                    destinationStream,
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>
         /// 读取加密文件，并将解密后的内容反序列化为对象。
         /// </summary>
         public T ReadEncryptFile<T>(string sourcePath)
@@ -82,6 +144,38 @@ namespace SerializableReadWrite
                 Encrypt.Decrypt(sourceStream, contentStream);
                 contentStream.Position = 0;
                 return Serializer.Deserialize<T>(contentStream);
+            }
+        }
+
+        /// <summary>
+        /// 异步读取加密文件，并将解密后的内容反序列化为对象。
+        /// </summary>
+        public async Task<T> ReadEncryptFileAsync<T>(
+            string sourcePath,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            ValidateSourcePath(sourcePath);
+
+            using (var sourceStream = new FileStream(
+                sourcePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                FileBufferSize,
+                true))
+            using (var contentStream = new MemoryStream())
+            {
+                await Encrypt.DecryptAsync(
+                    sourceStream,
+                    contentStream,
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
+                contentStream.Position = 0;
+                return await Serializer.DeserializeAsync<T>(
+                    contentStream,
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -113,6 +207,41 @@ namespace SerializableReadWrite
         }
 
         /// <summary>
+        /// 异步加密源文件并写入目标文件。
+        /// 目标文件已存在时会被覆盖。
+        /// </summary>
+        public async Task EncryptFileAsync(
+            string sourcePath,
+            string destinationPath,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            EnsureDifferentPaths(sourcePath, destinationPath);
+
+            using (var sourceStream = new FileStream(
+                sourcePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                FileBufferSize,
+                true))
+            using (var destinationStream = new FileStream(
+                destinationPath,
+                FileMode.Create,
+                FileAccess.ReadWrite,
+                FileShare.None,
+                FileBufferSize,
+                true))
+            {
+                await Encrypt.EncryptAsync(
+                    sourceStream,
+                    destinationStream,
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        /// <summary>
         /// 将对象序列化、加密并写入目标文件。
         /// 目标文件已存在时会被覆盖。
         /// </summary>
@@ -133,6 +262,44 @@ namespace SerializableReadWrite
                     FileBufferSize))
                 {
                     Encrypt.Encrypt(contentStream, destinationStream);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 异步将对象序列化、加密并写入目标文件。
+        /// 目标文件已存在时会被覆盖。
+        /// </summary>
+        public async Task EncryptFileAsync<T>(
+            T value,
+            string destinationPath,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            ValidateDestinationPath(destinationPath);
+
+            using (var contentStream = new MemoryStream())
+            {
+                await Serializer.SerializeAsync(
+                    value,
+                    contentStream,
+                    progress,
+                    cancellationToken).ConfigureAwait(false);
+                contentStream.Position = 0;
+
+                using (var destinationStream = new FileStream(
+                    destinationPath,
+                    FileMode.Create,
+                    FileAccess.ReadWrite,
+                    FileShare.None,
+                    FileBufferSize,
+                    true))
+                {
+                    await Encrypt.EncryptAsync(
+                        contentStream,
+                        destinationStream,
+                        progress,
+                        cancellationToken).ConfigureAwait(false);
                 }
             }
         }

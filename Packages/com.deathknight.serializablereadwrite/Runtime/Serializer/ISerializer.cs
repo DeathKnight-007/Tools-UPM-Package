@@ -1,66 +1,59 @@
-using System.Collections;
-using System.Collections.Generic;
+using System;
 using System.IO;
-using UnityEngine;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace SerializableReadWrite
 {
     public interface ISerializer
     {
-        /// <summary>
-        /// 将对象序列化到byte数组中
-        /// </summary>
-        /// <typeparam name="T"></typeparam>
-        /// <param name="target"></param>
-        /// <param name="buffer"></param>
-        /// <param name="offset"></param>
-        /// <returns></returns>
-        public int Serialize<T>(T target, byte[] buffer, int offset);
-        
-        /// <summary>
-        /// 直接返回数组
-        /// </summary>
-        /// <typeparam name="T"></typeparam>
-        /// <param name="target"></param>
-        /// <returns></returns>
-        public byte[] Serialize<T>(T target);
+        int Serialize<T>(T target, byte[] buffer, int offset);
+        byte[] Serialize<T>(T target);
+        string SerializeToString<T>(T target);
+        void Serialize<T>(T target, Stream stream);
 
-        public string SerializeToString<T>(T target);
+        T Deserialize<T>(byte[] buffer, int offset, int count);
+        T Deserialize<T>(Stream stream);
+        T Deserialize<T>(string content);
 
-        /// <summary>
-        /// 序列化到stream里
-        /// </summary>
-        /// <typeparam name="T"></typeparam>
-        /// <param name="target"></param>
-        /// <param name="stream"></param>
-        /// <returns></returns>
-        public void Serialize<T>(T target, Stream stream);
+        Task<int> SerializeAsync<T>(
+            T target,
+            byte[] buffer,
+            int offset,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default);
 
-        /// <summary>
-        /// 从byte数组中，反序列化出对象
-        /// </summary>
-        /// <typeparam name="T"></typeparam>
-        /// <param name="buffer"></param>
-        /// <param name="offset"></param>
-        /// <param name="count"></param>
-        /// <returns></returns>
-        public T Deserialize<T>(byte[] buffer, int offset, int count);
+        Task<byte[]> SerializeAsync<T>(
+            T target,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default);
 
-        /// <summary>
-        /// 从Stream里反序列出出对象
-        /// </summary>
-        /// <typeparam name="T"></typeparam>
-        /// <param name="stream"></param>
-        /// <param name="count"></param>
-        /// <returns></returns>
-        public T Deserialize<T>(Stream stream);
+        Task<string> SerializeToStringAsync<T>(
+            T target,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default);
 
-        /// <summary>
-        /// 从字符串中反序列化出对象
-        /// </summary>
-        /// <typeparam name="T"></typeparam>
-        /// <param name="content"></param>
-        /// <returns></returns>
-        public T Deserialize<T>(string content);
+        Task SerializeAsync<T>(
+            T target,
+            Stream stream,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default);
+
+        Task<T> DeserializeAsync<T>(
+            byte[] buffer,
+            int offset,
+            int count,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default);
+
+        Task<T> DeserializeAsync<T>(
+            Stream stream,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default);
+
+        Task<T> DeserializeAsync<T>(
+            string content,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default);
     }
 }

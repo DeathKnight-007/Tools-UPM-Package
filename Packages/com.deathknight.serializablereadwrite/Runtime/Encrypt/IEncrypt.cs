@@ -1,4 +1,7 @@
+using System;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace SerializableReadWrite
 {
@@ -31,6 +34,24 @@ namespace SerializableReadWrite
         int Encrypt(Stream contentStream, byte[] encryptBuffer, int encryptOffset);
         byte[] Encrypt(Stream contentStream);
 
+        Task EncryptAsync(
+            Stream contentStream,
+            Stream encryptStream,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default);
+
+        Task<byte[]> EncryptAsync(
+            Stream contentStream,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default);
+
+        Task<byte[]> EncryptAsync(
+            byte[] contentBuffer,
+            int contentOffset,
+            int contentCount,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default);
+
         int Decrypt(
             byte[] encryptBuffer,
             int encryptOffset,
@@ -42,5 +63,23 @@ namespace SerializableReadWrite
         void Decrypt(Stream encryptStream, Stream contentStream);
         int Decrypt(Stream encryptStream, byte[] contentBuffer, int contentOffset);
         byte[] Decrypt(Stream encryptStream);
+
+        Task DecryptAsync(
+            Stream encryptStream,
+            Stream contentStream,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default);
+
+        Task<byte[]> DecryptAsync(
+            Stream encryptStream,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default);
+
+        Task<byte[]> DecryptAsync(
+            byte[] encryptBuffer,
+            int encryptOffset,
+            int encryptCount,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default);
     }
 }
