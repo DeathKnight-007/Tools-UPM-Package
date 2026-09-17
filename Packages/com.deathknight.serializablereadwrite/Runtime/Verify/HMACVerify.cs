@@ -5,6 +5,14 @@ namespace SerializableReadWrite
 {
     public class HMACVerify : IVerify
     {
+        public bool NeedPassword
+        {
+            get
+            {
+                return true;
+            }
+        }
+
         public int TagLength
         {
             get

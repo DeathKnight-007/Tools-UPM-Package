@@ -7,6 +7,7 @@ namespace SerializableReadWrite
     /// </summary>
     public interface IVerify 
     {
+        bool NeedPassword { get; }
         int TagLength { get; }
         /// <summary>
         /// 计算校验码，一般将校验码放到数据最后。

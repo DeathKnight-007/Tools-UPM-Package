@@ -1,4 +1,3 @@
-using System;
 using System.IO;
 using System.Security.Cryptography;
 
@@ -6,6 +5,8 @@ namespace SerializableReadWrite
 {
     public class HashVerify : IVerify
     {
+        public bool NeedPassword => false;
+
         /// <summary>
         /// SHA-256 固定输出 256 bit，也就是 32 byte。
         /// </summary>
