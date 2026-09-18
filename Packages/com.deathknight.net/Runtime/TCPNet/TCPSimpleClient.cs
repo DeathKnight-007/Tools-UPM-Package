@@ -128,14 +128,14 @@ namespace DeathKnight.Net
             this.config = config;
             tcpClient = new TcpClient();
             //tcpClient.ReceiveTimeout = config.ReceiveTimeout; 使用异步方式接收，这个参数tcpClient实际上没用
-            if (config.OSReceiveBufferSize > 0)
+            if (config.AdvanceConfig.OSReceiveBufferSize > 0)
             {
-                tcpClient.ReceiveBufferSize = config.OSReceiveBufferSize;
+                tcpClient.ReceiveBufferSize = config.AdvanceConfig.OSReceiveBufferSize;
             }
             //tcpClient.SendTimeout = config.WriteTimeout; 使用异步方式发送，这个参数tcpClient实际上没用
-            if (config.OSSendBufferSize > 0)
+            if (config.AdvanceConfig.OSSendBufferSize > 0)
             {
-                tcpClient.SendBufferSize = config.OSSendBufferSize;
+                tcpClient.SendBufferSize = config.AdvanceConfig.OSSendBufferSize;
             }
         }
 

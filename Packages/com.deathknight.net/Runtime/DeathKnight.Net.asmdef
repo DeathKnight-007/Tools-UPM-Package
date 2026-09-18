@@ -1,14 +1,16 @@
 {
-  "name": "DeathKnight.Net",
-  "rootNamespace": "DeathKnight.Net",
-  "references": [],
-  "includePlatforms": [],
-  "excludePlatforms": [],
-  "allowUnsafeCode": false,
-  "overrideReferences": false,
-  "precompiledReferences": [],
-  "autoReferenced": true,
-  "defineConstraints": [],
-  "versionDefines": [],
-  "noEngineReferences": false
+    "name": "DeathKnight.Net",
+    "rootNamespace": "DeathKnight.Net",
+    "references": [
+        "GUID:44191f06f6e1b7d41a6d4229ad7489e0"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
 }

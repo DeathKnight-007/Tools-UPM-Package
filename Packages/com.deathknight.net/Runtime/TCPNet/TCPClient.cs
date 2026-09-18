@@ -11,14 +11,6 @@ namespace DeathKnight.Net
 {
     public class TCPClient : NetClient
     {
-        public TCPClient()
-        {
-            defaultConfig = new NetClientConfig();
-            defaultConfig.WriteTimeout = 10 * 1000; // 10s
-            defaultConfig.OSSendBufferSize = 0; // 使用默认
-            defaultConfig.ReceiveTimeout = 0; // 永久等待数据
-            defaultConfig.OSReceiveBufferSize = 0; // 使用默认
-        }
         private NetClientConfig config;
         public override NetClientConfig Config
         {
@@ -34,15 +26,6 @@ namespace DeathKnight.Net
             get
             {
                 return info;
-            }
-        }
-
-        private NetClientConfig defaultConfig;
-        public override NetClientConfig DefaultConfig
-        {
-            get
-            {
-                return defaultConfig;
             }
         }
 

@@ -77,6 +77,41 @@ namespace SerializableReadWrite
             return JsonConvert.SerializeObject(target);
         }
 
+        public int Serialize(object target, byte[] buffer, int offset)
+        {
+            return Serialize<object>(target, buffer, offset);
+        }
+
+        public byte[] Serialize(object target)
+        {
+            return Serialize<object>(target);
+        }
+
+        public string SerializeToString(object target)
+        {
+            return SerializeToString<object>(target);
+        }
+
+        public void Serialize(object target, Stream stream)
+        {
+            Serialize<object>(target, stream);
+        }
+
+        public object Deserialize(byte[] buffer, int offset, int count)
+        {
+            return Deserialize<object>(buffer, offset, count);
+        }
+
+        public object Deserialize(Stream stream)
+        {
+            return Deserialize<object>(stream);
+        }
+
+        public object Deserialize(string content)
+        {
+            return Deserialize<object>(content);
+        }
+
         public async Task<int> SerializeAsync<T>(
             T target,
             byte[] buffer,
@@ -271,6 +306,93 @@ namespace SerializableReadWrite
                 byteCount,
                 byteCount);
             return result;
+        }
+
+        public Task<int> SerializeAsync(
+            object target,
+            byte[] buffer,
+            int offset,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            return SerializeAsync<object>(
+                target,
+                buffer,
+                offset,
+                progress,
+                cancellationToken);
+        }
+
+        public Task<byte[]> SerializeAsync(
+            object target,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            return SerializeAsync<object>(
+                target,
+                progress,
+                cancellationToken);
+        }
+
+        public Task<string> SerializeToStringAsync(
+            object target,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            return SerializeToStringAsync<object>(
+                target,
+                progress,
+                cancellationToken);
+        }
+
+        public Task SerializeAsync(
+            object target,
+            Stream stream,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            return SerializeAsync<object>(
+                target,
+                stream,
+                progress,
+                cancellationToken);
+        }
+
+        public Task<object> DeserializeAsync(
+            byte[] buffer,
+            int offset,
+            int count,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            return DeserializeAsync<object>(
+                buffer,
+                offset,
+                count,
+                progress,
+                cancellationToken);
+        }
+
+        public Task<object> DeserializeAsync(
+            Stream stream,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            return DeserializeAsync<object>(
+                stream,
+                progress,
+                cancellationToken);
+        }
+
+        public Task<object> DeserializeAsync(
+            string content,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            return DeserializeAsync<object>(
+                content,
+                progress,
+                cancellationToken);
         }
 
         private async Task<byte[]> SerializeToBytesAsync<T>(

@@ -63,10 +63,16 @@ namespace DeathKnight.Net
         }
         public struct NetClientAdvancedConfig
         {
-
+            /// <summary>
+            /// 操作系统接收缓冲字节长度， <=0 表示使用系统默认值
+            /// 但是不代表一次只能接收这么多，一次接收很长就需要等待。缓冲长度影响接收效率和内存占用
+            /// </summary>
             public int OSReceiveBufferSize;
 
-
+            /// <summary>
+            /// 操作系统发送缓冲字节长度, <=0 表示使用系统默认值
+            /// 但是不代表一次只能发送这么多，一次发送很长就需要等待。缓冲长度影响发送效率和内存占用
+            /// </summary>
             public int OSSendBufferSize;
         }
         public struct NetClientConfig
@@ -87,21 +93,14 @@ namespace DeathKnight.Net
             public int ReceiveTimeout;
 
             /// <summary>
-            /// 操作系统接收缓冲字节长度， <=0 表示使用系统默认值
-            /// 但是不代表一次只能接收这么多，一次接收很长就需要等待。缓冲长度影响接收效率和内存占用
-            /// </summary>
-            public int OSReceiveBufferSize;
-
-            /// <summary>
             /// 发送超时设置，递交给操作系统数据的时长，影响这个时长的一般就是，发送慢，缓存满了得一直等待，<=0 表示不设置超时
             /// </summary>
             public int WriteTimeout;
 
             /// <summary>
-            /// 操作系统发送缓冲字节长度, <=0 表示使用系统默认值
-            /// 但是不代表一次只能发送这么多，一次发送很长就需要等待。缓冲长度影响发送效率和内存占用
+            /// 高级设置
             /// </summary>
-            public int OSSendBufferSize;                   
+            public NetClientAdvancedConfig AdvanceConfig;
         }
         public struct NetClientInfo
         {
@@ -130,8 +129,6 @@ namespace DeathKnight.Net
             /// </summary>
             public IPEndPoint ServerConnectedIP;
         }
-
-        public abstract NetClientConfig DefaultConfig { get; }
         public abstract NetClientConfig Config { get; }
         public abstract NetClientInfo Info { get; }
 
