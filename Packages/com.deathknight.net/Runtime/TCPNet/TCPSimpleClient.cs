@@ -170,7 +170,7 @@ namespace DeathKnight.Net
                     // 2、主动关闭了连接
                     // 3、发生网络错误
                     // 网络看起来正常，但是接收不到网络数据，或者接收速度很慢，或者服务器坏了，这就需要超时设置
-                    return await tcpClient.GetStream().ReadAsync(buffer, offset, buffer.Length, linkedCancelSource.Token);
+                    return await tcpClient.GetStream().ReadAsync(buffer, offset, buffer.Length - offset, linkedCancelSource.Token);
                 }
                 catch (OperationCanceledException exception) when(timeoutCancelSource.IsCancellationRequested && !cancel.IsCancellationRequested)
                 {

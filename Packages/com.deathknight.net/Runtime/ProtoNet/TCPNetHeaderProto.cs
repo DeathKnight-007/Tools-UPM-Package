@@ -11,13 +11,27 @@ namespace DeathKnight.Net
     /// </summary>
     public struct TCPNetHeaderProto
     {
+        public int DefaultMagic
+        {
+            get
+            {
+                return 0x128e597f;
+            }
+        }
+        public byte DefaultVersion
+        {
+            get
+            {
+                return 1;
+            }
+        }
         /*
          1、承担部分分帧任务
          2、主要承担分帧任务是消息头协议，消息体长度，消息体，这种固定格式分帧
          3、magic可以额外作为分帧的一个检查项，因为tcp已经完全胜任分帧任务了，这个可以检查万一发送的协议不对，相当于一协议的名字
          4、包：没有明确概念，应用层一般指一帧的数据。
         */
-        public int Magic; // 4
+        public int Magic;// 4
         // 整个协议的版本，包含消息头的解析协议和消息体的解析协议
         public byte Version; // 1
         /* 
@@ -32,7 +46,7 @@ namespace DeathKnight.Net
         // 用于消息分片,当消息超过协议帧最大数据量
         public FragmentInfo FragmentInfo; // 5
         public uint PayloadLength; // 4
-        public ushort HeaderLength // 不写入proto序列化中
+        public static ushort HeaderLength // 不写入proto序列化中
         {
             get
             {
@@ -48,9 +62,9 @@ namespace DeathKnight.Net
         public void ToBytes(byte[] buffer, int offset)
         {
             int pos = offset;
-            Buffer.BlockCopy(Magic.ToByteArray(ByteOrder.Big), 0, buffer, pos, 4);
+            Buffer.BlockCopy(DefaultMagic.ToByteArray(ByteOrder.Big), 0, buffer, pos, 4);
             pos += 4;
-            buffer[pos] = Version;
+            buffer[pos] = DefaultVersion;
             pos++;
             Buffer.BlockCopy(MessageType.ToByteArray(ByteOrder.Big), 0, buffer, pos, 2);
             pos += 2;
@@ -75,6 +89,45 @@ namespace DeathKnight.Net
             pos += 2;
             Buffer.BlockCopy(PayloadLength.ToByteArray(ByteOrder.Big), 0, buffer, pos, 4);
             pos += 4;
+        }
+        public static TCPNetHeaderProto GetProto(byte[] buffer, int offset)
+        {
+            int pos = offset;
+            TCPNetHeaderProto result = new TCPNetHeaderProto();
+            result.Magic = BitConverter.ToInt32(buffer, pos);
+            pos += 4;
+            result.Version = buffer[pos];
+            pos++;
+            result.MessageType = BitConverter.ToUInt16(buffer, pos);
+            pos += 2;
+            result.RequestId = BitConverter.ToUInt64(buffer, pos);
+            pos += 8;
+            result.Timestamp = BitConverter.ToUInt32(buffer, pos);
+            pos += 4;
+            result.FragmentInfo = new();
+            result.FragmentInfo.NeedFragment = buffer[pos] == 1;
+            pos ++;
+            result.FragmentInfo.FragmentId = BitConverter.ToUInt64(buffer, pos);
+            pos += 8;
+            result.FragmentInfo.Index = BitConverter.ToUInt16(buffer, pos);
+            pos += 2;
+            result.FragmentInfo.TotalCount = BitConverter.ToUInt16(buffer, pos);
+            pos += 2;
+            result.PayloadLength = BitConverter.ToUInt32(buffer, pos);
+            pos += 4;
+            return result;
+        }
+        public bool Valid()
+        {
+            if(Magic != DefaultMagic)
+            {
+                return false;
+            }
+            if (Version != DefaultVersion)
+            {
+                return false;
+            }
+            return true;
         }
     }
     public struct FragmentInfo

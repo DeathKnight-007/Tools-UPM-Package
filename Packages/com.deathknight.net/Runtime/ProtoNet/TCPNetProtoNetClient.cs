@@ -22,7 +22,7 @@ namespace DeathKnight.Net
 
         private NetClient netClient;
         private byte[] writeBuffer; // 发送帧数据缓冲池
-        private byte[] readBuffer; // 接收帧数据缓冲池
+        private byte[] readBuffer; // 总接收数据缓冲池
         private ConcurrentBag<MemoryStream> bigBuffers; // 大块帧数据缓存池
         private ConcurrentDictionary<ulong, MemoryStream> bigFrames; // 大块帧数据
         private ISerializer serializer;
@@ -32,18 +32,24 @@ namespace DeathKnight.Net
         {
             this.netClient = netClient;
             this.FrameBufferSize = frameBufferSize;
-            readBuffer = new byte[FrameBufferSize];
+            readBuffer = new byte[FrameBufferSize * 2];
             writeBuffer = new byte[FrameBufferSize];
             this.serializer = serializer;
             requestId = 0;
             bigBuffers = new();
             bigFrames = new();
+            readBufferPos = 0;
             sendCancelTokenSource = new();
+            receiveCancelTokenSource = new();
             sendTask = Task.Run(SendLoopAsync);
+            receiveTask = Task.Run(ReceiveLoopAsync);
         }
         public void Dispose()
         {
             sendCancelTokenSource.Cancel();
+            receiveCancelTokenSource.Cancel();
+            sendTask.Dispose();
+            receiveTask.Dispose();
             this.netClient?.Dispose();
         }
 
@@ -79,13 +85,16 @@ namespace DeathKnight.Net
             object target = element.Item1;
             if (!header.FragmentInfo.NeedFragment)
             {
-                //写入消息头
-                header.RequestId = requestId;
-                header.ToBytes(writeBuffer, 0);
+
                 try
                 {
-                    int count = serializer.Serialize(target, writeBuffer, header.HeaderLength);
-                    await netClient.Send(writeBuffer, 0, count + header.HeaderLength, token);
+                    int count = serializer.Serialize(target, writeBuffer, TCPNetHeaderProto.HeaderLength);
+                    //写入消息头
+                    header.RequestId = requestId;
+                    header.Timestamp = (uint)Math.Floor(Time.time * 1000);
+                    header.PayloadLength = (uint)count;
+                    header.ToBytes(writeBuffer, 0);
+                    await netClient.Send(writeBuffer, 0, count + TCPNetHeaderProto.HeaderLength, token);
                     requestId++;
                 }
                 catch (Exception)
@@ -108,13 +117,14 @@ namespace DeathKnight.Net
                 serializer.Serialize(target, mstream);
                 while (true)
                 {
+                    int writeLength = (int)Math.Min(writeBuffer.Length - TCPNetHeaderProto.HeaderLength, mstream.Length - mstream.Position);
+                    mstream.Write(writeBuffer, TCPNetHeaderProto.HeaderLength, writeLength);
                     //写入消息头
                     header.RequestId = requestId;
+                    header.Timestamp = (uint)Math.Floor(Time.time * 1000);
+                    header.PayloadLength = (uint)writeLength;
                     header.ToBytes(writeBuffer, 0);
-                    //
-                    int writeLength = (int)Math.Min(writeBuffer.Length - header.HeaderLength, mstream.Length - mstream.Position);
-                    mstream.Write(writeBuffer, header.HeaderLength, writeLength);
-                    await netClient.Send(writeBuffer, 0, writeLength + header.HeaderLength, token);
+                    await netClient.Send(writeBuffer, 0, writeLength + TCPNetHeaderProto.HeaderLength, token);
                     requestId++;
                     if (mstream.Position >= mstream.Length)
                     {
@@ -143,6 +153,77 @@ namespace DeathKnight.Net
                     try
                     {
                         await SendQueue(token);
+                    }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception)
+                    {
+                        throw;
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+
+            }
+            catch (Exception e)
+            {
+                Debug.LogError(e);
+            }
+        }
+
+        private int readBufferPos;
+        private Task receiveTask;
+        private async Task<(object, TCPNetHeaderProto)> Receive(CancellationToken token)
+        {
+            (object, TCPNetHeaderProto) item = new();
+            while (true) {
+                int count = await netClient.Receive(readBuffer, readBufferPos, token);
+                readBufferPos += count;
+                // 接收到的数据超过消息偷了，则解析出消息头
+                if (readBufferPos >= TCPNetHeaderProto.HeaderLength)
+                {
+                    TCPNetHeaderProto header = TCPNetHeaderProto.GetProto(readBuffer, 0);
+                    if (!header.Valid())
+                    {
+                        throw new Exception("error header");
+                    }
+                    item.Item2 = header;
+                    if (readBufferPos >= header.PayloadLength + TCPNetHeaderProto.HeaderLength)
+                    {
+                        item.Item1 = serializer.Deserialize(readBuffer, TCPNetHeaderProto.HeaderLength, (int)header.PayloadLength);
+                        if(readBufferPos > header.PayloadLength + TCPNetHeaderProto.HeaderLength)
+                        {
+                            Buffer.BlockCopy(readBuffer, (int)(header.PayloadLength + TCPNetHeaderProto.HeaderLength), readBuffer, 0,
+                                (int)(readBufferPos - (header.PayloadLength + TCPNetHeaderProto.HeaderLength)));
+                            readBufferPos = (int)(readBufferPos - (header.PayloadLength + TCPNetHeaderProto.HeaderLength));
+                        }
+                        else
+                        {
+                            readBufferPos = 0;
+                        }
+                        return item;
+                    }
+                    // 否则继续等待
+                }
+                // 否则继续等待
+            }
+        }
+
+        private CancellationTokenSource receiveCancelTokenSource;
+        private async Task ReceiveLoopAsync()
+        {
+            var token = receiveCancelTokenSource.Token;
+
+            try
+            {
+                while (true)
+                {
+                    try
+                    {
+                        await Receive(token);
                     }
                     catch (OperationCanceledException) when (token.IsCancellationRequested)
                     {
