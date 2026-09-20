@@ -3,6 +3,8 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using WebSocketSharp;
+using System.Buffers.Binary;
+using Codice.Client.Common;
 
 namespace DeathKnight.Net
 {
@@ -38,19 +40,19 @@ namespace DeathKnight.Net
          1、标记消息类型，给网关路由信息
          2、消息类型，同时也给出了数据的解析结构信息
          */
-        public ushort MessageType; // 2
+        public short MessageType; // 2
         // 本次请求的id, 从0递增，主要用来判断，服务器是否回复了本次请求
-        public ulong RequestId; // 8
+        public long RequestId; // 8
         // 发送方发送时的时间，服务器接收后，复制该值，返给客户端，客户端算出往返时间。这个时间客户端可以自己定义，Unity的Time.time即可。
-        public uint Timestamp; // 4
+        public int Timestamp; // 4
         // 用于消息分片,当消息超过协议帧最大数据量
-        public FragmentInfo FragmentInfo; // 5
-        public uint PayloadLength; // 4
-        public static ushort HeaderLength // 不写入proto序列化中
+        public FragmentInfo FragmentInfo; // 5 + 8
+        public int PayloadLength; // 4
+        public static short HeaderLength // 不写入proto序列化中
         {
             get
             {
-                return 28;
+                return 36;
             }
         }
         public byte[] ToBytes()
@@ -62,15 +64,15 @@ namespace DeathKnight.Net
         public void ToBytes(byte[] buffer, int offset)
         {
             int pos = offset;
-            Buffer.BlockCopy(DefaultMagic.ToByteArray(ByteOrder.Big), 0, buffer, pos, 4);
+            BinaryPrimitives.WriteInt32BigEndian(buffer.AsSpan(pos, 4), DefaultMagic);
             pos += 4;
             buffer[pos] = DefaultVersion;
             pos++;
-            Buffer.BlockCopy(MessageType.ToByteArray(ByteOrder.Big), 0, buffer, pos, 2);
+            BinaryPrimitives.WriteInt16BigEndian(buffer.AsSpan(pos, 2), MessageType);
             pos += 2;
-            Buffer.BlockCopy(RequestId.ToByteArray(ByteOrder.Big), 0, buffer, pos, 8);
+            BinaryPrimitives.WriteInt64BigEndian(buffer.AsSpan(pos, 8), RequestId);
             pos += 8;
-            Buffer.BlockCopy(Timestamp.ToByteArray(ByteOrder.Big), 0, buffer, pos, 4);
+            BinaryPrimitives.WriteInt32BigEndian(buffer.AsSpan(pos, 4), Timestamp);
             pos += 4;
             if (FragmentInfo.NeedFragment)
             {
@@ -81,39 +83,39 @@ namespace DeathKnight.Net
                 buffer[pos] = 0;
             }
             pos += 1;
-            Buffer.BlockCopy(FragmentInfo.FragmentId.ToByteArray(ByteOrder.Big), 0, buffer, pos, 8);
+            BinaryPrimitives.WriteInt64BigEndian(buffer.AsSpan(pos, 8), FragmentInfo.FragmentId);
             pos += 8;
-            Buffer.BlockCopy(FragmentInfo.Index.ToByteArray(ByteOrder.Big), 0, buffer, pos, 2);
+            BinaryPrimitives.WriteInt16BigEndian(buffer.AsSpan(pos, 2), FragmentInfo.Index);
             pos += 2;
-            Buffer.BlockCopy(FragmentInfo.TotalCount.ToByteArray(ByteOrder.Big), 0, buffer, pos, 2);
+            BinaryPrimitives.WriteInt16BigEndian(buffer.AsSpan(pos, 2), FragmentInfo.TotalCount);
             pos += 2;
-            Buffer.BlockCopy(PayloadLength.ToByteArray(ByteOrder.Big), 0, buffer, pos, 4);
+            BinaryPrimitives.WriteInt32BigEndian(buffer.AsSpan(pos, 4), PayloadLength);
             pos += 4;
         }
         public static TCPNetHeaderProto GetProto(byte[] buffer, int offset)
         {
             int pos = offset;
             TCPNetHeaderProto result = new TCPNetHeaderProto();
-            result.Magic = BitConverter.ToInt32(buffer, pos);
+            result.Magic = BinaryPrimitives.ReadInt32BigEndian(buffer.AsSpan(pos, 4));
             pos += 4;
             result.Version = buffer[pos];
             pos++;
-            result.MessageType = BitConverter.ToUInt16(buffer, pos);
+            result.MessageType = BinaryPrimitives.ReadInt16BigEndian(buffer.AsSpan(pos, 2));
             pos += 2;
-            result.RequestId = BitConverter.ToUInt64(buffer, pos);
+            result.RequestId = BinaryPrimitives.ReadInt64BigEndian(buffer.AsSpan(pos, 8));
             pos += 8;
-            result.Timestamp = BitConverter.ToUInt32(buffer, pos);
+            result.Timestamp = BinaryPrimitives.ReadInt32BigEndian(buffer.AsSpan(pos, 4));
             pos += 4;
             result.FragmentInfo = new();
             result.FragmentInfo.NeedFragment = buffer[pos] == 1;
             pos ++;
-            result.FragmentInfo.FragmentId = BitConverter.ToUInt64(buffer, pos);
+            result.FragmentInfo.FragmentId = BinaryPrimitives.ReadInt64BigEndian(buffer.AsSpan(pos, 8));
             pos += 8;
-            result.FragmentInfo.Index = BitConverter.ToUInt16(buffer, pos);
+            result.FragmentInfo.Index = BinaryPrimitives.ReadInt16BigEndian(buffer.AsSpan(pos, 2));
             pos += 2;
-            result.FragmentInfo.TotalCount = BitConverter.ToUInt16(buffer, pos);
+            result.FragmentInfo.TotalCount = BinaryPrimitives.ReadInt16BigEndian(buffer.AsSpan(pos, 2));
             pos += 2;
-            result.PayloadLength = BitConverter.ToUInt32(buffer, pos);
+            result.PayloadLength = BinaryPrimitives.ReadInt32BigEndian(buffer.AsSpan(pos, 4));
             pos += 4;
             return result;
         }
@@ -133,8 +135,8 @@ namespace DeathKnight.Net
     public struct FragmentInfo
     {
         public bool NeedFragment;//是否需要分片
-        public ulong FragmentId; // 这个大片的id，以大片的第一片的RequestId命名
-        public ushort Index; // 片序列号，从0开始
-        public ushort TotalCount; // 片总数是多少。
+        public long FragmentId; // 这个大片的id，以大片的第一片的RequestId命名
+        public short Index; // 片序列号，从1开始
+        public short TotalCount; // 片总数是多少。
     }
 }

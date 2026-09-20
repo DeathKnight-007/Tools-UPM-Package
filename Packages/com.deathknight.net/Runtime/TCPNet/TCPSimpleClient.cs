@@ -91,6 +91,10 @@ namespace DeathKnight.Net
                 {
                     throw new OperationCanceledException("tcp write timeout", exception);
                 }
+                catch
+                {
+                    throw;
+                }
             }
             else
             {
@@ -105,20 +109,9 @@ namespace DeathKnight.Net
                 return;
             }
 
-            try
-            {
-                // 这里会操作系统会通知服务器断开连接
-                tcpClient.Dispose();
-            }
-            catch (Exception exception)
-            {
-                Debug.LogError(exception);
-            }
-            finally
-            {
-                tcpClient = null;
-                clientIPEndPoint = null;
-            }
+            tcpClient.Dispose();
+            tcpClient = null;
+            clientIPEndPoint = null;
         }
 
         private TcpClient tcpClient;
@@ -175,6 +168,10 @@ namespace DeathKnight.Net
                 catch (OperationCanceledException exception) when(timeoutCancelSource.IsCancellationRequested && !cancel.IsCancellationRequested)
                 {
                     throw new TimeoutException("tcp receive timed out", exception);
+                }
+                catch
+                {
+                    throw;
                 }
             }
             else
