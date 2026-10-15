@@ -112,6 +112,50 @@ namespace SerializableReadWrite
             return Deserialize<object>(content);
         }
 
+        public object Deserialize(
+            Type type,
+            byte[] buffer,
+            int offset,
+            int count)
+        {
+            ValidateType(type);
+            ValidateSegment(buffer, offset, count);
+            string content = utf8.GetString(buffer, offset, count);
+            return JsonConvert.DeserializeObject(content, type);
+        }
+
+        public object Deserialize(Type type, Stream stream)
+        {
+            ValidateType(type);
+            if (stream == null)
+                throw new ArgumentNullException(nameof(stream));
+            if (!stream.CanRead)
+                throw new ArgumentException("反序列化源流必须可读", nameof(stream));
+
+            using (var streamReader = new StreamReader(
+                stream,
+                utf8,
+                false,
+                1024 * 16,
+                true))
+            using (var jsonReader = new JsonTextReader(streamReader))
+            {
+                jsonReader.CloseInput = false;
+                return Newtonsoft.Json.JsonSerializer
+                    .CreateDefault()
+                    .Deserialize(jsonReader, type);
+            }
+        }
+
+        public object Deserialize(Type type, string content)
+        {
+            ValidateType(type);
+            if (content == null)
+                throw new ArgumentNullException(nameof(content));
+
+            return JsonConvert.DeserializeObject(content, type);
+        }
+
         public async Task<int> SerializeAsync<T>(
             T target,
             byte[] buffer,
@@ -358,6 +402,100 @@ namespace SerializableReadWrite
                 cancellationToken);
         }
 
+        public async Task<object> DeserializeAsync(
+            Type type,
+            byte[] buffer,
+            int offset,
+            int count,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            ValidateType(type);
+            ValidateSegment(buffer, offset, count);
+            AsyncStreamProgress.Report(
+                progress,
+                ReadWriteStage.Deserializing,
+                0,
+                count);
+
+            object result = await Task.Run(
+                () => Deserialize(type, buffer, offset, count),
+                cancellationToken).ConfigureAwait(false);
+
+            AsyncStreamProgress.Report(
+                progress,
+                ReadWriteStage.Deserializing,
+                count,
+                count);
+            return result;
+        }
+
+        public async Task<object> DeserializeAsync(
+            Type type,
+            Stream stream,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            ValidateType(type);
+            if (stream == null)
+                throw new ArgumentNullException(nameof(stream));
+            if (!stream.CanRead)
+                throw new ArgumentException("反序列化源流必须可读", nameof(stream));
+
+            long totalBytes = AsyncStreamProgress.GetRemainingLength(stream);
+            using (var memoryStream = new MemoryStream())
+            {
+                long processedBytes = await AsyncStreamProgress.CopyToAsync(
+                    stream,
+                    memoryStream,
+                    ReadWriteStage.Deserializing,
+                    progress,
+                    cancellationToken,
+                    totalBytes).ConfigureAwait(false);
+
+                byte[] data = memoryStream.ToArray();
+                object result = await Task.Run(
+                    () => Deserialize(type, data, 0, data.Length),
+                    cancellationToken).ConfigureAwait(false);
+
+                AsyncStreamProgress.Report(
+                    progress,
+                    ReadWriteStage.Deserializing,
+                    totalBytes >= 0 ? totalBytes : processedBytes,
+                    totalBytes);
+                return result;
+            }
+        }
+
+        public async Task<object> DeserializeAsync(
+            Type type,
+            string content,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            ValidateType(type);
+            if (content == null)
+                throw new ArgumentNullException(nameof(content));
+
+            int byteCount = utf8.GetByteCount(content);
+            AsyncStreamProgress.Report(
+                progress,
+                ReadWriteStage.Deserializing,
+                0,
+                byteCount);
+
+            object result = await Task.Run(
+                () => Deserialize(type, content),
+                cancellationToken).ConfigureAwait(false);
+
+            AsyncStreamProgress.Report(
+                progress,
+                ReadWriteStage.Deserializing,
+                byteCount,
+                byteCount);
+            return result;
+        }
+
         public Task<object> DeserializeAsync(
             byte[] buffer,
             int offset,
@@ -406,6 +544,12 @@ namespace SerializableReadWrite
                     return utf8.GetBytes(content);
                 },
                 cancellationToken).ConfigureAwait(false);
+        }
+
+        private static void ValidateType(Type type)
+        {
+            if (type == null)
+                throw new ArgumentNullException(nameof(type));
         }
 
         private static void ValidateSegment(

@@ -136,6 +136,41 @@ namespace SerializableReadWrite
             throw CreateMissingTypeException();
         }
 
+        public object Deserialize(
+            Type type,
+            byte[] buffer,
+            int offset,
+            int count)
+        {
+            ValidateType(type);
+            ValidateSegment(buffer, offset, count);
+            using (var stream = new MemoryStream(
+                buffer,
+                offset,
+                count,
+                writable: false))
+            {
+                return Serializer.NonGeneric.Deserialize(type, stream);
+            }
+        }
+
+        public object Deserialize(Type type, Stream stream)
+        {
+            ValidateType(type);
+            ValidateReadStream(stream);
+            return Serializer.NonGeneric.Deserialize(type, stream);
+        }
+
+        public object Deserialize(Type type, string content)
+        {
+            ValidateType(type);
+            if (content == null)
+                throw new ArgumentNullException(nameof(content));
+
+            byte[] data = Convert.FromBase64String(content);
+            return Deserialize(type, data, 0, data.Length);
+        }
+
         public async Task<int> SerializeAsync<T>(
             T target,
             byte[] buffer,
@@ -401,6 +436,88 @@ namespace SerializableReadWrite
                 cancellationToken).ConfigureAwait(false);
         }
 
+        public async Task<object> DeserializeAsync(
+            Type type,
+            byte[] buffer,
+            int offset,
+            int count,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            ValidateType(type);
+            ValidateSegment(buffer, offset, count);
+            AsyncStreamProgress.Report(
+                progress,
+                ReadWriteStage.Deserializing,
+                0,
+                count);
+
+            object result = await Task.Run(
+                () => Deserialize(type, buffer, offset, count),
+                cancellationToken).ConfigureAwait(false);
+
+            AsyncStreamProgress.Report(
+                progress,
+                ReadWriteStage.Deserializing,
+                count,
+                count);
+            return result;
+        }
+
+        public async Task<object> DeserializeAsync(
+            Type type,
+            Stream stream,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            ValidateType(type);
+            ValidateReadStream(stream);
+            long totalBytes = AsyncStreamProgress.GetRemainingLength(stream);
+
+            using (var memoryStream = new MemoryStream())
+            {
+                long processedBytes = await AsyncStreamProgress.CopyToAsync(
+                    stream,
+                    memoryStream,
+                    ReadWriteStage.Deserializing,
+                    progress,
+                    cancellationToken,
+                    totalBytes).ConfigureAwait(false);
+
+                byte[] data = memoryStream.ToArray();
+                object result = await Task.Run(
+                    () => Deserialize(type, data, 0, data.Length),
+                    cancellationToken).ConfigureAwait(false);
+
+                AsyncStreamProgress.Report(
+                    progress,
+                    ReadWriteStage.Deserializing,
+                    totalBytes >= 0 ? totalBytes : processedBytes,
+                    totalBytes);
+                return result;
+            }
+        }
+
+        public async Task<object> DeserializeAsync(
+            Type type,
+            string content,
+            IProgress<ReadWriteProgress> progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            ValidateType(type);
+            if (content == null)
+                throw new ArgumentNullException(nameof(content));
+
+            byte[] data = Convert.FromBase64String(content);
+            return await DeserializeAsync(
+                type,
+                data,
+                0,
+                data.Length,
+                progress,
+                cancellationToken).ConfigureAwait(false);
+        }
+
         public Task<object> DeserializeAsync(
             byte[] buffer,
             int offset,
@@ -483,6 +600,12 @@ namespace SerializableReadWrite
                 throw new ArgumentNullException(nameof(buffer));
             if (offset < 0 || offset > buffer.Length)
                 throw new ArgumentOutOfRangeException(nameof(offset));
+        }
+
+        private static void ValidateType(Type type)
+        {
+            if (type == null)
+                throw new ArgumentNullException(nameof(type));
         }
 
         private static void ValidateSegment(
