@@ -1,0 +1,184 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Net;
+using System.Net.Security;
+using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
+using UnityEngine;
+
+namespace DeathKnight.Net
+{
+    /// <summary>
+    /// 无加密tcp连接
+    /// </summary>
+    public class TCPSimpleClient : NetSimpleClient
+    {
+        private IPEndPoint clientIPEndPoint;
+
+        public override IPEndPoint ClientIPEndPoint
+        {
+            get
+            {
+                return clientIPEndPoint;
+            }
+        }
+
+        private IPEndPoint serverIpEndPoint;
+        public override IPEndPoint ServerIpEndPoint
+        {
+            get
+            {
+                return serverIpEndPoint;
+            }
+        }
+
+        public override async Task Connect(IPEndPoint ip)
+        {
+            if (tcpClient == null)
+            {
+                throw new SocketException(-1);
+            }
+            await tcpClient.ConnectAsync(ip.Address, ip.Port);
+            this.serverIpEndPoint = tcpClient.Client.RemoteEndPoint as IPEndPoint;
+            this.clientIPEndPoint = tcpClient.Client.LocalEndPoint as IPEndPoint;
+        }
+
+        public override async Task Connect(string host, int port)
+        {
+            if (tcpClient == null)
+            {
+                throw new SocketException(-1);
+            }
+            await tcpClient.ConnectAsync(host, port);
+            this.serverIpEndPoint = tcpClient.Client.RemoteEndPoint as IPEndPoint;
+            this.clientIPEndPoint = tcpClient.Client.LocalEndPoint as IPEndPoint;
+        }
+
+        public override void Disconnect()
+        {
+            tcpClient.Client.Shutdown(SocketShutdown.Send);
+        }
+
+        public override async Task Send(byte[] buffer, int offset, int count, CancellationToken cancel)
+        {
+            if (buffer == null)
+            {
+                throw new ArgumentNullException(nameof(buffer));
+            }
+
+            if (offset < 0 || offset > buffer.Length)
+            {
+                throw new ArgumentOutOfRangeException(nameof(offset));
+            }
+
+            if (count < 0 || count > buffer.Length - offset)
+            {
+                throw new ArgumentOutOfRangeException(nameof(count));
+            }
+
+            if (tcpClient == null)
+            {
+                throw new InvalidOperationException("TCP client is not initialized or has been disconnected.");
+            }
+
+            if (config.WriteTimeout > 0)
+            {
+                using CancellationTokenSource timeoutCancelSource = new CancellationTokenSource();
+                timeoutCancelSource.CancelAfter(config.WriteTimeout);
+                using CancellationTokenSource linkedCancelSource = CancellationTokenSource.CreateLinkedTokenSource(timeoutCancelSource.Token, cancel);
+                try
+                {
+                    // 不会停下这个任务，除非以下情况发生
+                    // 1、网络不可用， 直接报异常结束
+                    // 2、socket关闭了，直接报异常结束
+
+                    // 看起来网络正常，但是数据发送不了，或者发送超级慢，或者干脆服务器坏了，这就需要超时设置了
+                    // 这个任务完成，只表示数据交给了操作系统，并不是表示数据已经成功发送出去了
+                    await tcpClient.GetStream().WriteAsync(buffer, offset, count, linkedCancelSource.Token);
+                }
+                catch (OperationCanceledException exception) when (timeoutCancelSource.IsCancellationRequested && !cancel.IsCancellationRequested)
+                {
+                    throw new OperationCanceledException("tcp write timeout", exception);
+                }
+                catch
+                {
+                    throw;
+                }
+            }
+            else
+            {
+                await tcpClient.GetStream().WriteAsync(buffer, offset, count, cancel);
+            }
+        }
+
+        public override void Dispose()
+        {
+            if (tcpClient == null)
+            {
+                return;
+            }
+
+            tcpClient.Dispose();
+            tcpClient = null;
+            clientIPEndPoint = null;
+        }
+
+        private TcpClient tcpClient;
+        private NetClientConfig config;
+        public override void Init(NetClientConfig config)
+        {
+            this.config = config;
+            tcpClient = new TcpClient();
+        }
+
+        public override async Task<int> Receive(byte[] buffer, int offset, int count, CancellationToken cancel)
+        {
+            if (buffer == null)
+            {
+                throw new ArgumentNullException(nameof(buffer));
+            }
+
+            if (offset < 0 || offset > buffer.Length)
+            {
+                throw new ArgumentOutOfRangeException(nameof(offset));
+            }
+
+
+            if (tcpClient == null)
+            {
+                throw new InvalidOperationException("TCP client is not initialized or has been disconnected.");
+            }
+
+            if (config.ReceiveTimeout > 0)
+            {
+                using CancellationTokenSource timeoutCancelSource = new CancellationTokenSource();
+                timeoutCancelSource.CancelAfter(config.ReceiveTimeout);
+                using CancellationTokenSource linkedCancelSource = CancellationTokenSource.CreateLinkedTokenSource(timeoutCancelSource.Token, cancel);
+
+                try
+                {
+                    // 不会停下这个任务，除非一下情况发生
+                    // 1、收到了至少一个字节
+                    // 2、主动关闭了连接
+                    // 3、发生网络错误
+                    // 网络看起来正常，但是接收不到网络数据，或者接收速度很慢，或者服务器坏了，这就需要超时设置
+                    return await tcpClient.GetStream().ReadAsync(buffer, offset, count, linkedCancelSource.Token);
+                }
+                catch (OperationCanceledException exception) when(timeoutCancelSource.IsCancellationRequested && !cancel.IsCancellationRequested)
+                {
+                    throw new TimeoutException("tcp receive timed out", exception);
+                }
+                catch
+                {
+                    throw;
+                }
+            }
+            else
+            {
+                return await tcpClient.GetStream().ReadAsync(buffer, offset, count, cancel);
+            }
+        }
+    }
+}
