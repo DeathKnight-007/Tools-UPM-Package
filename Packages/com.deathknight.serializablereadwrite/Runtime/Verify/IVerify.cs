@@ -15,6 +15,8 @@ namespace SerializableReadWrite
 
         byte[] ComputeTag(byte[] data, byte[] passward = null);
         bool VerifyTag(byte[] data, byte[] tag, byte[] passward = null);
+        byte[] ComputeTag(byte[] data, int offset, int count, byte[] passward = null);
+        bool VerifyTag(byte[] data, int offset, int count, byte[] tag, byte[] passward = null);
         byte[] ComputeTag(Stream data, byte[] passward = null);
         bool VerifyTag(Stream data, byte[] tag, byte[] passward = null);
 

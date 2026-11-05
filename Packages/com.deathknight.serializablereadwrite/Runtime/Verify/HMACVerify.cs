@@ -165,5 +165,27 @@ namespace SerializableReadWrite
                 totalBytes);
             return algorithm.Hash;
         }
+
+        public byte[] ComputeTag(byte[] data, int offset, int count, byte[] passward = null)
+        {
+            if (data == null)
+                throw new ArgumentNullException(nameof(data));
+            if (passward == null)
+                throw new ArgumentNullException(nameof(passward));
+
+            using (var hmac = new HMACSHA256(passward))
+            {
+                return hmac.ComputeHash(data, offset, count);
+            }
+        }
+
+        public bool VerifyTag(byte[] data, int offset, int count, byte[] tag, byte[] passward = null)
+        {
+            if (tag == null || tag.Length != TagLength)
+                return false;
+
+            byte[] calculatedTag = ComputeTag(data, offset, count, passward);
+            return CryptographicOperations.FixedTimeEquals(calculatedTag, tag);
+        }
     }
 }

@@ -141,5 +141,25 @@ namespace SerializableReadWrite
                 return sha256.Hash;
             }
         }
+
+        public byte[] ComputeTag(byte[] data, int offset, int count, byte[] passward = null)
+        {
+            if (data == null)
+                throw new ArgumentNullException(nameof(data));
+
+            using (SHA256 sha256 = SHA256.Create())
+            {
+                return sha256.ComputeHash(data, offset, count);
+            }
+        }
+
+        public bool VerifyTag(byte[] data, int offset, int count, byte[] tag, byte[] passward = null)
+        {
+            if (tag == null || tag.Length != TagLength)
+                return false;
+
+            byte[] calculatedTag = ComputeTag(data, offset, count);
+            return CryptographicOperations.FixedTimeEquals(calculatedTag, tag);
+        }
     }
 }
