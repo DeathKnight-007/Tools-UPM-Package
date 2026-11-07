@@ -62,7 +62,7 @@ namespace DeathKnight.Net
         {
             try
             {
-                callback();
+                callback?.Invoke();
             }
             catch (Exception exception)
             {

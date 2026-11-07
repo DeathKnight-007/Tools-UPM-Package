@@ -15,53 +15,39 @@ namespace DeathKnight.Net
     /// </summary>
     public class TCPSimpleClient : NetSimpleClient
     {
-        private IPEndPoint clientIPEndPoint;
 
-        public override IPEndPoint ClientIPEndPoint
-        {
-            get
-            {
-                return clientIPEndPoint;
-            }
-        }
+        public IPEndPoint ClientIPEndPoint { get; private set; }
 
-        private IPEndPoint serverIpEndPoint;
-        public override IPEndPoint ServerIpEndPoint
-        {
-            get
-            {
-                return serverIpEndPoint;
-            }
-        }
+        public IPEndPoint ServerIpEndPoint { get; private set; }
 
-        public override async Task Connect(IPEndPoint ip)
+        public async Task Connect(IPEndPoint ip)
         {
             if (tcpClient == null)
             {
                 throw new SocketException(-1);
             }
             await tcpClient.ConnectAsync(ip.Address, ip.Port);
-            this.serverIpEndPoint = tcpClient.Client.RemoteEndPoint as IPEndPoint;
-            this.clientIPEndPoint = tcpClient.Client.LocalEndPoint as IPEndPoint;
+            this.ServerIpEndPoint = tcpClient.Client.RemoteEndPoint as IPEndPoint;
+            this.ClientIPEndPoint = tcpClient.Client.LocalEndPoint as IPEndPoint;
         }
 
-        public override async Task Connect(string host, int port)
+        public async Task Connect(string host, int port)
         {
             if (tcpClient == null)
             {
                 throw new SocketException(-1);
             }
             await tcpClient.ConnectAsync(host, port);
-            this.serverIpEndPoint = tcpClient.Client.RemoteEndPoint as IPEndPoint;
-            this.clientIPEndPoint = tcpClient.Client.LocalEndPoint as IPEndPoint;
+            this.ServerIpEndPoint = tcpClient.Client.RemoteEndPoint as IPEndPoint;
+            this.ClientIPEndPoint = tcpClient.Client.LocalEndPoint as IPEndPoint;
         }
 
-        public override void Disconnect()
+        public void Disconnect()
         {
             tcpClient.Client.Shutdown(SocketShutdown.Send);
         }
 
-        public override async Task Send(byte[] buffer, int offset, int count, CancellationToken cancel)
+        public async Task Send(byte[] buffer, int offset, int count, CancellationToken cancel)
         {
             if (buffer == null)
             {
@@ -113,7 +99,7 @@ namespace DeathKnight.Net
             }
         }
 
-        public override void Dispose()
+        public void Dispose()
         {
             if (tcpClient == null)
             {
@@ -122,18 +108,18 @@ namespace DeathKnight.Net
 
             tcpClient.Dispose();
             tcpClient = null;
-            clientIPEndPoint = null;
+            ClientIPEndPoint = null;
         }
 
         private TcpClient tcpClient;
         private NetClientConfig config;
-        public override void Init(NetClientConfig config)
+        public void Init(NetClientConfig config)
         {
             this.config = config;
             tcpClient = new TcpClient();
         }
 
-        public override async Task<int> Receive(byte[] buffer, int offset, int count, CancellationToken cancel)
+        public async Task<int> Receive(byte[] buffer, int offset, int count, CancellationToken cancel)
         {
             if (buffer == null)
             {

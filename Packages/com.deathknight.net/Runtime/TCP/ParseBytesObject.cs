@@ -3,23 +3,24 @@ using System.Collections.Generic;
 using System;
 using SerializableReadWrite;
 using System.IO;
+using static Unity.IO.LowLevel.Unsafe.AsyncReadManagerMetrics;
 
 namespace DeathKnight.Net
 {
-    public class ParseBytesObject<T> : IDisposable where T : BaseProto, new()
+    public class ParseBytesObject<T> : IParseBytesObject<T> where T : BaseProto, new()
     {
         private Stack<MemoryStream> bigBuffers = new(); // 大块帧数据缓存池
         private Dictionary<long, MemoryStream> bigFrames = new(); // 大块帧数据
         private Dictionary<long, short> bigFramesIndexProgress = new();
         private MemoryStream sendBigFrames;
 
-        ISerializer serializer;
-        int frameBufferSize;
-        public ParseBytesObject(ISerializer serializer, int FrameBufferSize)
+        public ISerializer Serializer { get; private set; }
+        public int FrameBufferSize { get; private set; }
+        public ParseBytesObject(ISerializer Serializer, int FrameBufferSize)
         {
-            this.serializer = serializer;
+            this.Serializer = Serializer;
             sendBigFrames = new();
-            frameBufferSize = FrameBufferSize;
+            this.FrameBufferSize = FrameBufferSize;
         }
         private T t = new();
 
@@ -30,7 +31,7 @@ namespace DeathKnight.Net
 
         public int ParseObjectToBytes(object value, byte[] buffer, int offset)
         {
-            return serializer.Serialize(value, buffer, offset);
+            return Serializer.Serialize(value, buffer, offset);
         }
 
         private object currentParseValue;
@@ -38,11 +39,11 @@ namespace DeathKnight.Net
         {
             currentParseValue = value;
             sendBigFrames.SetLength(0);
-            serializer.Serialize(value, sendBigFrames);
+            Serializer.Serialize(value, sendBigFrames);
             sendBigFrames.Position = 0;
             header.FragmentInfo.NeedFragment = true;
             header.FragmentInfo.Index = 0;
-            double fragmentCount = Math.Ceiling((double)sendBigFrames.Length / (frameBufferSize - t.HeaderLength));
+            double fragmentCount = Math.Ceiling((double)sendBigFrames.Length / (FrameBufferSize - t.HeaderLength));
             if (fragmentCount > t.FragmentMax)
             {
                 throw new ArgumentOutOfRangeException("send data too long can not slice");
@@ -56,7 +57,7 @@ namespace DeathKnight.Net
             {
                 throw new InvalidOperationException("need parse value first");
             }
-            int writeLength = (int)Math.Min(frameBufferSize - t.HeaderLength, sendBigFrames.Length - sendBigFrames.Position);
+            int writeLength = (int)Math.Min(FrameBufferSize - t.HeaderLength, sendBigFrames.Length - sendBigFrames.Position);
             sendBigFrames.Read(buffer, t.HeaderLength, writeLength);
             header.FragmentInfo.NeedFragment = true;
             header.PayloadLength = writeLength;
@@ -98,20 +99,9 @@ namespace DeathKnight.Net
             {
                 throw new Exception("MessageType is not registered");
             }
-            return serializer.Deserialize(objectType, buffer, offset, count);
+            return Serializer.Deserialize(objectType, buffer, offset, count);
         }
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="header"></param>
-        /// <param name="buffer"></param>
-        /// <param name="offset"></param>
-        /// <param name="count"></param>
-        /// <param name="value"></param>
-        /// <returns>是否完成了切片合并转化</returns>
-        /// <exception cref="InvalidDataException"></exception>
-        /// <exception cref="Exception"></exception>
         public bool ParseObjectFromBytesFragment(T header, byte[] buffer, int offset, int count, out object value)
         {
             if (header.FragmentInfo.Index <= 0 || header.FragmentInfo.Index > header.FragmentInfo.TotalCount)
@@ -129,7 +119,7 @@ namespace DeathKnight.Net
                 if (!bigBuffers.TryPop(out mstream))
                 {
                     mstream = new MemoryStream();
-                    mstream.Capacity = frameBufferSize * 2;
+                    mstream.Capacity = FrameBufferSize * 2;
                 }
                 bigFrames.Add(header.FragmentInfo.FragmentId, mstream);
                 bigFramesIndexProgress.Add(header.FragmentInfo.FragmentId, 1);
@@ -152,7 +142,7 @@ namespace DeathKnight.Net
                     throw new Exception("MessageType is not registered");
                 }
                 getstream.Position = 0;
-                object Value = serializer.Deserialize(objectType, getstream);
+                object Value = Serializer.Deserialize(objectType, getstream);
                 bigFrames.Remove(header.FragmentInfo.FragmentId);
                 bigFramesIndexProgress.Remove(header.FragmentInfo.FragmentId);
                 getstream.SetLength(0);
@@ -180,6 +170,37 @@ namespace DeathKnight.Net
                 item.Value.Dispose();
             }
             bigFrames.Clear();
+        }
+
+        public T ParseHeaderFromBytes(MemoryStream stream, int count)
+        {
+            if (stream.TryGetBuffer(out var segment))
+            {
+                T result = ParseHeaderFromBytes(segment.Array, segment.Offset + (int)stream.Position, count);
+                return result;
+            }
+            return default(T);
+        }
+
+        public object ParseObjectFromBytes(T header, MemoryStream stream, int count)
+        {
+            if (stream.TryGetBuffer(out var segment))
+            {
+                object result = ParseObjectFromBytes(header, segment.Array, segment.Offset + (int)stream.Position, count);
+                return result;
+            }
+            return null;
+        }
+
+        public bool ParseObjectFromBytesFragment(T header, MemoryStream stream, int count, out object value)
+        {
+            if (stream.TryGetBuffer(out var segment))
+            {
+                bool result = ParseObjectFromBytesFragment(header, segment.Array, segment.Offset + (int)stream.Position, count, out value);
+                return result;
+            }
+            value = null;
+            return false;
         }
     }
 }

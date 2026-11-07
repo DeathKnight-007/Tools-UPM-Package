@@ -2,9 +2,16 @@
     "name": "DeathKnightNet",
     "rootNamespace": "DeathKnight.Net",
     "references": [
-        "GUID:44191f06f6e1b7d41a6d4229ad7489e0"
+        "GUID:44191f06f6e1b7d41a6d4229ad7489e0",
+        "GUID:588cbb9b59922f44181e9afc0155aeab"
     ],
-    "includePlatforms": [],
+    "includePlatforms": [
+        "Android",
+        "Editor",
+        "iOS",
+        "WindowsStandalone32",
+        "WindowsStandalone64"
+    ],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,

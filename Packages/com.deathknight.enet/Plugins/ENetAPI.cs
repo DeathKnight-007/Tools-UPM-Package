@@ -2,6 +2,12 @@ using System;
 using System.Runtime.InteropServices;
 using System.Text;
 
+using UnityEngine;
+
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
+
 #if UNITY_EDITOR_WIN || ((UNITY_STANDALONE_WIN || UNITY_WSA) && !UNITY_EDITOR)
 using ENetSocket = System.UIntPtr;
 #else
@@ -14,6 +20,53 @@ using ENetSocket = System.Int32;
 /// </summary>
 public class ENetAPI
 {
+    // 以下成员加入现有 ENetAPI 类：
+    private static bool initialized;
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+    private static void OnRuntimeStart()
+    {
+        // 先移除再注册，避免重复订阅。
+        Application.quitting -= Shutdown;
+        Application.quitting += Shutdown;
+
+        EnsureInitialized();
+    }
+
+    public static void EnsureInitialized()
+    {
+        if (initialized)
+            return;
+
+        if (enet_initialize() != 0)
+            throw new InvalidOperationException("ENet 初始化失败。");
+
+        initialized = true;
+    }
+
+    private static void Shutdown()
+    {
+        if (!initialized)
+            return;
+
+        // 在这里接入统一清理，顺序必须是：
+        // 1. 停止并等待网络线程退出。
+        // 2. 销毁所有 Host，释放应用仍持有的 Packet。
+        // 3. 最后反初始化 ENet。
+
+        enet_deinitialize();
+        initialized = false;
+    }
+
+#if UNITY_EDITOR
+    [InitializeOnLoadMethod]
+    private static void RegisterEditorCallbacks()
+    {
+        AssemblyReloadEvents.beforeAssemblyReload -= Shutdown;
+        AssemblyReloadEvents.beforeAssemblyReload += Shutdown;
+    }
+#endif
+
     // 保留现有的静态链接方式。Android 的 .a 需要使用 IL2CPP。
     // 使用独立的 enet.dll 或 libenet.so 时，将库名改为 "enet"。
 #if UNITY_EDITOR_WIN
@@ -90,12 +143,16 @@ public class ENetAPI
         ENET_EVENT_TYPE_RECEIVE = 3
     }
 
-    // 使用原生默认对齐，不要为这些结构体设置 Pack = 1。
+    /// <summary>
+    /// 使用enet_address_set_host将域名hostName: "www.baidu.com" 转换为uinthost
+    /// 使用 enet_address_set_host_ip 将域名ip:"127.0.0.1"转换为uinthost
+    /// 使用原生默认对齐，不要为这些结构体设置 Pack = 1。
+    /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct ENetAddress
     {
         // host 使用网络字节序，port 使用主机字节序。
-        public uint host;
+        public uint host;// 实际上是ip地址，ip地址本来就是32位的。域名也是经过dns解析成ip的
         public ushort port;
     }
 
@@ -258,10 +315,22 @@ public class ENetAPI
     [DllImport(libName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi, ExactSpelling = true)]
     public extern static int enet_socketset_select(ENetSocket maxSocket, IntPtr readSet, IntPtr writeSet, uint timeout);
 
-    // 地址。原生参数为 char*，不是 UTF-16；这里使用 ANSI，适用于 IP 和 ASCII/Punycode 域名。
+    /// <summary>
+    /// 将字符串ip解析为网络字节
+    /// 地址。原生参数为 char*，不是 UTF-16；这里使用 ANSI，适用于 IP 和 ASCII/Punycode 域名。
+    /// </summary>
+    /// <param name="address"></param>
+    /// <param name="hostName">ip "127.0.0.1"</param>
+    /// <returns>0 解析成功， -1解析失败</returns>
     [DllImport(libName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi, ExactSpelling = true)]
     public extern static int enet_address_set_host_ip(ref ENetAddress address, [MarshalAs(UnmanagedType.LPStr)] string hostName);
 
+    /// <summary>
+    /// 将域名解析为网络字节
+    /// </summary>
+    /// <param name="address"></param>
+    /// <param name="hostName">域名 "www.baidu.com"</param>
+    /// <returns>0 解析成功， -1解析失败</returns>
     [DllImport(libName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi, ExactSpelling = true)]
     public extern static int enet_address_set_host(ref ENetAddress address, [MarshalAs(UnmanagedType.LPStr)] string hostName);
 
@@ -289,22 +358,58 @@ public class ENetAPI
     [DllImport(libName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi, ExactSpelling = true)]
     public extern static uint enet_crc32([In] ENetBuffer[] buffers, UIntPtr bufferCount);
 
-    // Host。创建客户端时，address 可传 IntPtr.Zero；创建监听端时使用 ref 地址重载。
+    /// <summary>
+    /// 创建客户端
+    /// </summary>
+    /// <param name="address">  nullptr,不指定本地绑定地址和端口 </param>
+    /// <param name="peerCount">  1,最多管理 1 条连接，通常连接一个服务端 </param>
+    /// <param name="channelLimit"> 2, 允许使用两个通道：0、1 </param>
+    /// <param name="incomingBandwidth"> 0,不设置固定的接收带宽限制 </param>
+    /// <param name="outgoingBandwidth"> 0 不设置固定的发送带宽限制 </param>
+    /// <returns>ENetHost*</returns>
     [DllImport(libName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi, ExactSpelling = true)]
     public extern static IntPtr enet_host_create(IntPtr address, UIntPtr peerCount, UIntPtr channelLimit, uint incomingBandwidth, uint outgoingBandwidth);
 
+    /// <summary>
+    /// 创建客户端
+    /// </summary>
+    /// <param name="address">  ENetAddress </param>
+    /// <param name="peerCount">  1,最多管理 1 条连接，通常连接一个服务端 </param>
+    /// <param name="channelLimit"> 2, 允许使用两个通道：0、1 </param>
+    /// <param name="incomingBandwidth"> 0,不设置固定的接收带宽限制 </param>
+    /// <param name="outgoingBandwidth"> 0 不设置固定的发送带宽限制 </param>
+    /// <returns>ENetHost*</returns>
     [DllImport(libName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi, ExactSpelling = true)]
     public extern static IntPtr enet_host_create(ref ENetAddress address, UIntPtr peerCount, UIntPtr channelLimit, uint incomingBandwidth, uint outgoingBandwidth);
 
+    /// <summary>
+    /// 释放host
+    /// </summary>
+    /// <param name="host"></param>
     [DllImport(libName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi, ExactSpelling = true)]
     public extern static void enet_host_destroy(IntPtr host);
 
+    /// <summary>
+    /// 
+    /// </summary>
+    /// <param name="host">你已经创建的 enetHost</param>
+    /// <param name="address">上一步准备的服务器地址</param>
+    /// <param name="channelCount">请求使用的通道数量，你可以先用 2</param>
+    /// <param name="data">	随连接请求附带的一个 uint 数据，暂时填 0；它不是超时时间</param>
+    /// <returns>ENetPeer* 空指针无法连接 非空指针连接过程已经开始</returns>
     [DllImport(libName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi, ExactSpelling = true)]
     public extern static IntPtr enet_host_connect(IntPtr host, ref ENetAddress address, UIntPtr channelCount, uint data);
 
     [DllImport(libName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi, ExactSpelling = true)]
     public extern static int enet_host_check_events(IntPtr host, out ENetEvent enetEvent);
 
+    /// <summary>
+    /// 同步函数，未完成连接会阻塞
+    /// </summary>
+    /// <param name="host"></param>
+    /// <param name="enetEvent"></param>
+    /// <param name="timeout"></param>
+    /// <returns></returns>
     [DllImport(libName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi, ExactSpelling = true)]
     public extern static int enet_host_service(IntPtr host, out ENetEvent enetEvent, uint timeout);
 
@@ -357,12 +462,27 @@ public class ENetAPI
     [DllImport(libName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi, ExactSpelling = true)]
     public extern static void enet_peer_reset(IntPtr peer);
 
+    /// <summary>
+    /// 发送队列中清空，立即开始断开握手，不等待，后续进度与结果由enet_host_service推进
+    /// </summary>
+    /// <param name="peer"></param>
+    /// <param name="data">填0</param>
     [DllImport(libName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi, ExactSpelling = true)]
     public extern static void enet_peer_disconnect(IntPtr peer, uint data);
 
+    /// <summary>
+    /// 立即断开，并重置本地，尝试发送握手，但是不保证完成，不等待对端确认
+    /// </summary>
+    /// <param name="peer"></param>
+    /// <param name="data">填0</param>
     [DllImport(libName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi, ExactSpelling = true)]
     public extern static void enet_peer_disconnect_now(IntPtr peer, uint data);
 
+    /// <summary>
+    /// 发送队列处理完，再开始断开握手，不等待，后续进度与结果由enet_host_service推进
+    /// </summary>
+    /// <param name="peer"></param>
+    /// <param name="data">填0</param>
     [DllImport(libName, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi, ExactSpelling = true)]
     public extern static void enet_peer_disconnect_later(IntPtr peer, uint data);
 

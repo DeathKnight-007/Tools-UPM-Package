@@ -10,6 +10,10 @@ namespace DeathKnight.Net
 {
     public class BaseProto
     {
+        public BaseProto()
+        {
+            HeaderLength = 38;
+        }
         private static Dictionary<int, Type> payloadTypes = new();
         public static readonly ReadOnlyDictionary<int, Type> PayloadTypes = new ReadOnlyDictionary<int, Type>(payloadTypes);
 
@@ -62,7 +66,7 @@ namespace DeathKnight.Net
         // 用于消息分片,当消息超过协议帧最大数据量
         public FragmentInfo FragmentInfo; // 5 + 8
         public int PayloadLength; // 4
-        public readonly short HeaderLength = 38; // 不写入proto序列化中
+        public short HeaderLength { get; protected set; } // 不写入proto序列化中
 
         public byte[] ToBytes()
         {
@@ -70,7 +74,7 @@ namespace DeathKnight.Net
             ToBytes(result, 0);
             return result;
         }
-        public void ToBytes(byte[] buffer, int offset)
+        public virtual void ToBytes(byte[] buffer, int offset)
         {
             int pos = offset;
             BinaryPrimitives.WriteInt32BigEndian(buffer.AsSpan(pos, 4), DefaultMagic);
@@ -101,7 +105,7 @@ namespace DeathKnight.Net
             BinaryPrimitives.WriteInt32BigEndian(buffer.AsSpan(pos, 4), PayloadLength);
             pos += 4;
         }
-        public void GetProto(byte[] buffer, int offset)
+        public virtual void GetProto(byte[] buffer, int offset)
         {
             int pos = offset;
             this.Magic = BinaryPrimitives.ReadInt32BigEndian(buffer.AsSpan(pos, 4));
@@ -126,7 +130,7 @@ namespace DeathKnight.Net
             this.PayloadLength = BinaryPrimitives.ReadInt32BigEndian(buffer.AsSpan(pos, 4));
             pos += 4;
         }
-        public bool Valid()
+        public virtual bool Valid()
         {
             if (Magic != DefaultMagic)
             {
@@ -144,6 +148,13 @@ namespace DeathKnight.Net
             StringBuilder sb = new StringBuilder();
             sb.Append("{");
             foreach(var item in this.GetType().GetFields())
+            {
+                sb.Append(item.Name);
+                sb.Append(":");
+                sb.Append(item.GetValue(this).ToString());
+                sb.Append("\n");
+            }
+            foreach (var item in this.GetType().GetProperties())
             {
                 sb.Append(item.Name);
                 sb.Append(":");
