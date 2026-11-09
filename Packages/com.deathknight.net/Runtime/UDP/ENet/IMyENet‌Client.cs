@@ -10,7 +10,7 @@ using static ENetAPI;
 
 namespace DeathKnight.Net
 {
-    public interface IMyENet‌Client<T> : IDisposable where T : BaseProto, new()
+    public interface IMyENet‌Client : IDisposable
     {
         /// <summary>
         /// 服务器端点
@@ -20,7 +20,7 @@ namespace DeathKnight.Net
         /// <summary>
         /// 在主线程发布该事件，T为消息头， object为消息体
         /// </summary>
-        event Action<(T, object)> OnReceivedObject;
+        event Action<(BaseProto, object)> OnReceivedObject;
 
         /// <summary>
         /// 在主线程发布该事件，long为RequestId
@@ -63,16 +63,10 @@ namespace DeathKnight.Net
         ISerializer Serializer { get; }
 
         /// <summary>
-        /// 配置
-        /// </summary>
-        NetClientConfig Config { get; }
-
-        /// <summary>
         /// 初始化
         /// </summary>
-        /// <param name="config"></param>
         /// <returns></returns>
-        void Init(NetClientConfig config, int frameBufferSize, ISerializer Serializer);
+        void Init(int frameBufferSize, ISerializer Serializer);
 
         /// <summary>
         /// 直连端点ip
@@ -101,7 +95,7 @@ namespace DeathKnight.Net
         /// <typeparam name="U"></typeparam>
         /// <param name="data"></param>
         /// <param name="header"></param>
-        void Send<U>(U data, T header, ENetPacketFlag flag);
+        void Send<U>(U data, BaseProto header, ENetPacketFlag flag);
 
         /// <summary>
         /// 每帧更新调用

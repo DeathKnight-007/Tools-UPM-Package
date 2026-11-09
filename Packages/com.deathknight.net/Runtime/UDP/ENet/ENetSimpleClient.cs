@@ -15,17 +15,35 @@ namespace DeathKnight.Net
         public IPEndPoint ServerIpEndPoint { get; private set; }
         public async Task Connect(IPEndPoint ip, CancellationToken token)
         {
-            ENetAddress address = ParseENetAddress(ip);
-            await Connect(address, token);
+            if (disposed)
+                throw new ObjectDisposedException(nameof(ENetSimpleClient));
+            await Task.Run(() => {
+                ENetAddress address = ParseENetAddress(ip);
+                Connect(address, token);
+            });
+            // 请求取消，抛出取消异常
+            if (token.IsCancellationRequested)
+            {
+                throw new OperationCanceledException();
+            }
         }
 
         public async Task Connect(string host, int port, CancellationToken token)
         {
-            ENetAddress address = ParseENetAddress(host, port);
-            await Connect(address, token);
+            if (disposed)
+                throw new ObjectDisposedException(nameof(ENetSimpleClient));
+            await Task.Run(() => {
+                ENetAddress address = ParseENetAddress(host, port);
+                Connect(address, token);
+            });
+            // 请求取消，抛出取消异常
+            if (token.IsCancellationRequested)
+            {
+                throw new OperationCanceledException();
+            }
         }
 
-        private async Task Connect(ENetAddress address, CancellationToken token)
+        private void Connect(ENetAddress address, CancellationToken token)
         {
             enetPeer = enet_host_connect(enetHost, ref address, new UIntPtr(2), 0);
             if (enetPeer == IntPtr.Zero)
@@ -34,49 +52,50 @@ namespace DeathKnight.Net
             }
             ENetEvent enet_event = default(ENetEvent);
             uint timeout = 10 * 1000;
-            await Task.Run(() =>
+            long startTime = DateTime.UtcNow.Ticks / 10000;
+            while (DateTime.UtcNow.Ticks / 10000 - startTime < timeout)
             {
-                long startTime = DateTime.UtcNow.Ticks / 10000;
-                while (DateTime.UtcNow.Ticks / 10000 - startTime < timeout)
+                // 请求取消，抛出取消异常
+                if (token.IsCancellationRequested)
                 {
-                    // 请求取消，抛出取消异常
-                    if (token.IsCancellationRequested)
-                    {
-                        throw new OperationCanceledException();
-                    }
-                    uint onetimeout = 20;
-                    int result = enet_host_service(enetHost, out enet_event, onetimeout);
-                    if (result < 0)
-                    {
-                        throw new Exception("receive error");
-                    }
-                    else if (result == 0)
-                    {
+                    enet_peer_reset(enetPeer);
+                    throw new OperationCanceledException();
+                }
+                uint onetimeout = 20;
+                int result = enet_host_service(enetHost, out enet_event, onetimeout);
+                if (result < 0)
+                {
+                    throw new Exception("receive error");
+                }
+                else if (result == 0)
+                {
 
+                }
+                else
+                {
+                    if (enet_event.type == ENetEventType.ENET_EVENT_TYPE_CONNECT)
+                    {
+                        ServerIpEndPoint = new IPEndPoint(address.host, address.port);
+                        return;
+                    }
+                    else if (enet_event.type == ENetEventType.ENET_EVENT_TYPE_DISCONNECT)
+                    {
+                        throw new Exception("connect fail");
                     }
                     else
                     {
-                        if (enet_event.type == ENetEventType.ENET_EVENT_TYPE_CONNECT)
-                        {
-                            ServerIpEndPoint = new IPEndPoint(address.host, address.port);
-                            return;
-                        }
-                        else if (enet_event.type == ENetEventType.ENET_EVENT_TYPE_DISCONNECT)
-                        {
-                            throw new Exception("connect fail");
-                        }
-                        else
-                        {
-                            throw new Exception("connect fail");
-                        }
+                        throw new Exception("connect fail");
                     }
                 }
-                throw new TimeoutException("连接超过10s了");
-            });
+            }
+            enet_peer_reset(enetPeer);
+            throw new TimeoutException("连接超过10s了");
         }
 
         public void Disconnect()
         {
+            if (disposed)
+                throw new ObjectDisposedException(nameof(ENetSimpleClient));
             enet_peer_disconnect(enetPeer, 0);
         }
 
@@ -89,17 +108,21 @@ namespace DeathKnight.Net
             disposed = true;
         }
 
-        private NetClientConfig config;
         private IntPtr enetHost;
         private IntPtr enetPeer;
-        public void Init(NetClientConfig config)
+        private bool inited = false;
+        public void Init()
         {
-            this.config = config;
+            if (disposed)
+                throw new ObjectDisposedException(nameof(ENetSimpleClient));
+            if (inited)
+                return;
             enetHost = enet_host_create(IntPtr.Zero, new UIntPtr(1), new UIntPtr(2), 0, 0);
             if(enetHost == IntPtr.Zero)
             {
                 throw new Exception("create enetHost fail");
             }
+            inited = true;
         }
 
         private ENetAddress ParseENetAddress(IPEndPoint ip)
@@ -115,7 +138,7 @@ namespace DeathKnight.Net
         private ENetAddress ParseENetAddress(string host, int port)
         {
             ENetAddress address = new ENetAddress();
-            int result = enet_address_set_host_ip(ref address, host);
+            int result = enet_address_set_host(ref address, host);
             if (result < 0)
                 throw new Exception($"address parse fail. host:{host}, port:{port}");
             address.port = (ushort)port;
@@ -124,6 +147,8 @@ namespace DeathKnight.Net
 
         public int Receive(byte[] buffer, int offset, int count, out ENetPacketFlag flag)
         {
+            if (disposed)
+                throw new ObjectDisposedException(nameof(ENetSimpleClient));
             flag = ENetPacketFlag.ENET_PACKET_FLAG_RELIABLE;
             ENetEvent enet_event;
             int result = enet_host_service(enetHost, out enet_event, 0);
@@ -185,14 +210,22 @@ namespace DeathKnight.Net
 
         public void Send(MemoryStream stream, int count, ENetPacketFlag flag)
         {
+            if (disposed)
+                throw new ObjectDisposedException(nameof(ENetSimpleClient));
             if (stream.TryGetBuffer(out var segment))
             {
                 Send(segment.Array, segment.Offset + (int)stream.Position, count, flag);
+            }
+            else
+            {
+                throw new Exception();
             }
         }
 
         public void Send(byte[] buffer, int offset, int count, ENetPacketFlag flag)
         {
+            if (disposed)
+                throw new ObjectDisposedException(nameof(ENetSimpleClient));
             if (flag != ENetPacketFlag.ENET_PACKET_FLAG_RELIABLE && flag != ENetPacketFlag.ENET_PACKET_FLAG_UNSEQUENCED)
                 throw new Exception("flag is not supported");
             // 将buffer数据复制进enet发送队列里
@@ -214,7 +247,10 @@ namespace DeathKnight.Net
                 }
                 int result = enet_peer_send(enetPeer, channel, packet);
                 if (result < 0)
+                {
+                    enet_packet_destroy(packet);
                     throw new Exception("消息入队失败");
+                }
             }
             finally
             {

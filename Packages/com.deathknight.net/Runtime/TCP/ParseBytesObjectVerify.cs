@@ -87,10 +87,6 @@ namespace DeathKnight.Net
                 throw new ArgumentOutOfRangeException("buffer length is not enugh");
             T header = new();
             header.GetProto(buffer, offset);
-            if (!header.Valid())
-            {
-                throw new Exception("header is not valid");
-            }
             return header;
         }
         public object ParseObjectFromBytes(T header, byte[] buffer, int offset, int count)

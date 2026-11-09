@@ -22,7 +22,7 @@ namespace DeathKnight.Net
         /// </summary>
         /// <param name="config"></param>
         /// <returns></returns>
-        void Init(NetClientConfig config);
+        void Init();
 
         /// <summary>
         /// Ö±Á¬¶Ëµãip
