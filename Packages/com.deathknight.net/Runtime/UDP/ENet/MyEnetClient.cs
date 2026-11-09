@@ -595,15 +595,21 @@ namespace DeathKnight.Net
                         {
                             throw new OperationCanceledException();
                         }
+                        Func<object> parsebig;
+                        bool success;
+                        (BaseProto, object) result;
                         lock (cacheReceiveLock)
                         {
-                            (BaseProto, object) result;
-                            bool success = TryPareseOneReceive(cachedReceiveFrame.Dequeue(), out result);
+                            success = TryPareseOneReceive(cachedReceiveFrame.Dequeue(), out result, out parsebig);
                             cachedReceiveStream.Position = cachedReceiveStream.Length;// 解析的时候会搞乱Stream的指标，这里恢复一下
-                            if (success)
+                        }
+                        if (success)
+                        {
+                            if (parsebig != null)
                             {
-                                invokeHelper.InvokeOnMainThreadPost<(BaseProto, object)>(OnReceivedObject, result);
+                                result.Item2 = parsebig();
                             }
+                            invokeHelper.InvokeOnMainThreadPost<(BaseProto, object)>(OnReceivedObject, result);
                         }
                     }
                 });
@@ -680,7 +686,68 @@ namespace DeathKnight.Net
         }
 
         private ManualResetEventSlim mainReceiveIdle = new();
-        private int maxReceive = 0; // 单帧接收数据上限
+        private int maxReceive = 256 * 1024; // 单帧接收数据上限
+        private int realMaxReceive = 1024 * 1024; // 单帧接收数据最大增长上限
+        private int realMinReceive = 64 * 1024; // 单帧接收数据最大增长上限
+        private int fullCount = 0; // 连续多少帧，最大吞吐
+        private int maxCount = 60;
+        private int halfCount = 0; // 连续多少帧，未达到或者只达到接收上限的一半
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="full">是否一帧接收的数据量超过了设定上限</param>
+        private void UpdateMaxReceive(bool full, bool lessHalf)
+        {
+            if (full)
+            {
+                fullCount++;
+            }
+            else
+            {
+                fullCount = 0;
+            }
+            if (lessHalf)
+            {
+                halfCount++;
+            }
+            else
+            {
+                halfCount = 0;
+            }
+            if (fullCount >= maxCount)
+            {
+                fullCount = 0;
+
+                if (maxReceive >= realMaxReceive)
+                {
+                    maxReceive = realMaxReceive;
+                }
+                else
+                {
+                    maxReceive += (int)(maxReceive * 0.25f);
+                    if (maxReceive >= realMaxReceive)
+                    {
+                        maxReceive = realMaxReceive;
+                    }
+                }
+            }
+            if (halfCount >= maxCount)
+            {
+                halfCount = 0;
+                if (maxReceive <= realMinReceive)
+                {
+                    maxReceive = realMinReceive;
+                }
+                else
+                {
+                    maxReceive -= (int)(maxReceive * 0.25f);
+                    if (maxReceive <= realMinReceive)
+                    {
+                        maxReceive = realMinReceive;
+                    }
+                }
+            }
+        }
         /// <summary>
         /// 将所有接收都处理了, 获取到锁一次全处理完
         /// </summary>
@@ -699,7 +766,8 @@ namespace DeathKnight.Net
                 {
                     lock (enetLock)
                     {
-                        while (true)
+                        int allcount = 0;
+                        while (allcount < maxReceive)
                         {
                             try
                             {
@@ -707,6 +775,7 @@ namespace DeathKnight.Net
                                 int count = activeClient.Receive(readBuffer, 0, FrameBufferSize, out flag);
                                 if (count > 0)
                                 {
+                                    allcount += count;
                                     CacheReceive(readBuffer, 0, count, flag);
                                 }
                                 else
@@ -734,6 +803,7 @@ namespace DeathKnight.Net
                                 throw e;
                             }
                         }
+                        UpdateMaxReceive(allcount >= maxReceive, allcount <= maxReceive / 2);
                     }
                 }
             }
@@ -752,8 +822,9 @@ namespace DeathKnight.Net
         /// </summary>
         /// <param name="target"></param>
         /// <returns>是否处理成功，成功了则item有效</returns>
-        private bool TryPareseOneReceive((int start, int count, ENetPacketFlag flag) source, out (BaseProto Header, object Value) item)
+        private bool TryPareseOneReceive((int start, int count, ENetPacketFlag flag) source, out (BaseProto Header, object Value) item, out Func<object> parsebig)
         {
+            parsebig = null;
             item = new();
             ENetPacketFlag flag = source.flag;
             int count = source.count;
@@ -843,12 +914,17 @@ namespace DeathKnight.Net
                     {
                         // 解析消息体
                         cachedReceiveStream.Position = source.start + header.HeaderLength;
-                        object result;
-                        bool finish = bytesObjectTransfer.ParseObjectFromBytesFragment(header, cachedReceiveStream, header.PayloadLength, out result);
+                       
+                        bool finish = bytesObjectTransfer.ParseObjectFromBytesFragmentNext(header, cachedReceiveStream, header.PayloadLength);
                         invokeHelper.InvokeOnMainThreadPost<long>(OnReceivedFrame, header.RequestId);
                         if (finish)
                         {
-                            item.Value = result;
+                            parsebig = () =>
+                            {
+                                object result = bytesObjectTransfer.ParseObjectFromBytesFragmentFinal(header);
+                                return result;
+                            };
+                            item.Value = null;
                             return true;
                         }
                         return false;

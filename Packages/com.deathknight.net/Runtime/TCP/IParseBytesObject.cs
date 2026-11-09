@@ -36,12 +36,14 @@ namespace DeathKnight.Net
         /// <returns>是否完成了切片合并转化</returns>
         /// <exception cref="InvalidDataException"></exception>
         /// <exception cref="Exception"></exception>
-        bool ParseObjectFromBytesFragment(T header, byte[] buffer, int offset, int count, out object value);
+        bool ParseObjectFromBytesFragmentNext(T header, byte[] buffer, int offset, int count);
+
+        object ParseObjectFromBytesFragmentFinal(T header);
 
         T ParseHeaderFromBytes(MemoryStream stream, int count);
 
         object ParseObjectFromBytes(T header, MemoryStream stream, int count);
 
-        bool ParseObjectFromBytesFragment(T header, MemoryStream stream, int count, out object value);
+        bool ParseObjectFromBytesFragmentNext(T header, MemoryStream stream, int count);
     }
 }

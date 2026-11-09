@@ -107,7 +107,7 @@ namespace DeathKnight.Net
             return Serializer.Deserialize(objectType, buffer, offset, count);
         }
 
-        public bool ParseObjectFromBytesFragment(T header, byte[] buffer, int offset, int count, out object value)
+        public bool ParseObjectFromBytesFragmentNext(T header, byte[] buffer, int offset, int count)
         {
             if (header.FragmentInfo.Index <= 0 || header.FragmentInfo.Index > header.FragmentInfo.TotalCount)
             {
@@ -145,26 +145,31 @@ namespace DeathKnight.Net
             getstream.Write(buffer, offset, count);
             if (header.FragmentInfo.Index == header.FragmentInfo.TotalCount)
             {
-                Type objectType;
-                if (!BaseProto.PayloadTypes.TryGetValue(header.MessageType, out objectType))
-                {
-                    throw new Exception("MessageType is not registered");
-                }
-                getstream.Position = 0;
-                object Value = Serializer.Deserialize(objectType, getstream);
-                bigFrames.Remove(header.FragmentInfo.FragmentId);
-                bigFramesIndexProgress.Remove(header.FragmentInfo.FragmentId);
-                getstream.SetLength(0);
-                bigBuffers.Push(getstream);
-                value = Value;
                 return true;
             }
             else
             {
-                value = null;
                 return false;
             }
         }
+
+        public object ParseObjectFromBytesFragmentFinal(T header)
+        {
+            MemoryStream getstream = bigFrames[header.FragmentInfo.FragmentId];
+            Type objectType;
+            if (!BaseProto.PayloadTypes.TryGetValue(header.MessageType, out objectType))
+            {
+                throw new Exception("MessageType is not registered");
+            }
+            getstream.Position = 0;
+            object Value = Serializer.Deserialize(objectType, getstream);
+            bigFrames.Remove(header.FragmentInfo.FragmentId);
+            bigFramesIndexProgress.Remove(header.FragmentInfo.FragmentId);
+            getstream.SetLength(0);
+            bigBuffers.Push(getstream);
+            return Value;
+        }
+
         public void Dispose()
         {
             sendBigFrames.Dispose();
@@ -201,14 +206,13 @@ namespace DeathKnight.Net
             return null;
         }
 
-        public bool ParseObjectFromBytesFragment(T header, MemoryStream stream, int count, out object value)
+        public bool ParseObjectFromBytesFragmentNext(T header, MemoryStream stream, int count)
         {
             if (stream.TryGetBuffer(out var segment))
             {
-                bool result = ParseObjectFromBytesFragment(header, segment.Array, segment.Offset + (int)stream.Position, count, out value);
+                bool result = ParseObjectFromBytesFragmentNext(header, segment.Array, segment.Offset + (int)stream.Position, count);
                 return result;
             }
-            value = null;
             return false;
         }
     }

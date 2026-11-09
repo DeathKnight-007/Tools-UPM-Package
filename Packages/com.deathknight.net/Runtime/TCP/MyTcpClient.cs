@@ -479,12 +479,13 @@ namespace DeathKnight.Net
                     // 解析消息体
                     if (header != null && availableLength >= header.PayloadLength + t.HeaderLength)
                     {
-                        object result;
-                        bool finish = bytesObjectTransfer.ParseObjectFromBytesFragment(header, readBuffer, availableStart + t.HeaderLength, header.PayloadLength, out result);
+
+                        bool finish = bytesObjectTransfer.ParseObjectFromBytesFragmentNext(header, readBuffer, availableStart + t.HeaderLength, header.PayloadLength);
                         invokeHelper.InvokeOnMainThreadPost<long>(OnReceivedFrame, header.RequestId);
                         availableStart += t.HeaderLength + header.PayloadLength;
                         if (finish)
                         {
+                            object result = bytesObjectTransfer.ParseObjectFromBytesFragmentFinal(header);
                             item.Value = result;
                             return item;
                         }
