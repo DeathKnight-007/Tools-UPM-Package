@@ -20,16 +20,16 @@ namespace DeathKnight.Net
 
         public IPEndPoint ServerIpEndPoint { get; private set; }
 
-        private SslStream sslStream;
+        private SslStream sslStream = null;
         public async Task Connect(IPEndPoint ip)
         {
+            if (disposed)
+                throw new ObjectDisposedException(nameof(ENetSimpleClient));
+            if (!inited)
+                throw new Exception("not inited");
             if (tcpClient == null)
             {
                 throw new SocketException(-1);
-            }
-            if(config.encryptStrategy != EncryptStrategy.TLS)
-            {
-                throw new ArgumentException("EncryptStrategy is not TLS, but use TCPTLSSimpleClient, current EncryptStrategy is:" + config.encryptStrategy.ToString());
             }
             await tcpClient.ConnectAsync(ip.Address, ip.Port);
             // 使用TLS加密的话，连接完成后要走加密流程
@@ -42,19 +42,22 @@ namespace DeathKnight.Net
             // 4、客户端发送finished密钥，服务器收到finished密钥，确认密钥确实一样。同时发送给客户端自己的finished密钥，客户端再校验一遍。
             // 5、使用密钥对称加密算法加密服务器证书，发送给客户端
             // 6、客户端验证服务器证书，完成TLS连接，后续所有消息都经过了堆成密钥加密，包括前面的证书。
-            this.ClientIPEndPoint = tcpClient.Client.LocalEndPoint as IPEndPoint;
-            this.ServerIpEndPoint = tcpClient.Client.RemoteEndPoint as IPEndPoint;
+            if (tcpClient != null)
+            {
+                this.ServerIpEndPoint = tcpClient.Client.RemoteEndPoint as IPEndPoint;
+                this.ClientIPEndPoint = tcpClient.Client.LocalEndPoint as IPEndPoint;
+            }
         }
 
         public async Task Connect(string host, int port)
         {
+            if (disposed)
+                throw new ObjectDisposedException(nameof(ENetSimpleClient));
+            if (!inited)
+                throw new Exception("not inited");
             if (tcpClient == null)
             {
                 throw new SocketException(-1);
-            }
-            if (config.encryptStrategy != EncryptStrategy.TLS)
-            {
-                throw new ArgumentException("EncryptStrategy is not TLS, but use TCPTLSSimpleClient, current EncryptStrategy is:" + config.encryptStrategy.ToString());
             }
             await tcpClient.ConnectAsync(host, port);
             // 使用TLS加密的话，连接完成后要走加密流程
@@ -67,17 +70,28 @@ namespace DeathKnight.Net
             // 4、客户端发送finished密钥，服务器收到finished密钥，确认密钥确实一样。同时发送给客户端自己的finished密钥，客户端再校验一遍。
             // 5、使用密钥对称加密算法加密服务器证书，发送给客户端
             // 6、客户端验证服务器证书，完成TLS连接，后续所有消息都经过了堆成密钥加密，包括前面的证书。
-            this.ClientIPEndPoint = tcpClient.Client.LocalEndPoint as IPEndPoint;
-            this.ServerIpEndPoint = tcpClient.Client.RemoteEndPoint as IPEndPoint;
+            if (tcpClient != null)
+            {
+                this.ServerIpEndPoint = tcpClient.Client.RemoteEndPoint as IPEndPoint;
+                this.ClientIPEndPoint = tcpClient.Client.LocalEndPoint as IPEndPoint;
+            }
         }
 
         public void Disconnect()
         {
+            if (disposed)
+                throw new ObjectDisposedException(nameof(ENetSimpleClient));
+            if (!inited)
+                throw new Exception("not inited");
             tcpClient.Client.Shutdown(SocketShutdown.Send);
         }
 
         public async Task Send(byte[] buffer, int offset, int count, CancellationToken cancel)
         {
+            if (disposed)
+                throw new ObjectDisposedException(nameof(ENetSimpleClient));
+            if (!inited)
+                throw new Exception("not inited");
             if (buffer == null)
             {
                 throw new ArgumentNullException(nameof(buffer));
@@ -98,66 +112,71 @@ namespace DeathKnight.Net
                 throw new InvalidOperationException("TCP client is not initialized or has been disconnected.");
             }
 
-            if (config.WriteTimeout > 0)
+            using CancellationTokenSource timeoutCancelSource = new CancellationTokenSource();
+            timeoutCancelSource.CancelAfter(config.WriteTimeout);
+            timeoutCancelSource.Token.Register(() => {
+                this.Dispose();
+            });
+            using CancellationTokenSource linkedCancelSource = CancellationTokenSource.CreateLinkedTokenSource(timeoutCancelSource.Token, cancel);
+            try
             {
-                using CancellationTokenSource timeoutCancelSource = new CancellationTokenSource();
-                timeoutCancelSource.CancelAfter(config.WriteTimeout);
-                using CancellationTokenSource linkedCancelSource = CancellationTokenSource.CreateLinkedTokenSource(timeoutCancelSource.Token, cancel);
-                try
-                {
-                    // 不会停下这个任务，除非以下情况发生
-                    // 1、网络不可用， 直接报异常结束
-                    // 2、socket关闭了，直接报异常结束
+                // 不会停下这个任务，除非以下情况发生
+                // 1、网络不可用， 直接报异常结束
+                // 2、socket关闭了，直接报异常结束
 
-                    // 看起来网络正常，但是数据发送不了，或者发送超级慢，或者干脆服务器坏了，这就需要超时设置了
-                    // 这个任务完成，只表示数据交给了操作系统，并不是表示数据已经成功发送出去了
-                    await sslStream.WriteAsync(buffer, offset, count, linkedCancelSource.Token);
-                }
-                catch (OperationCanceledException exception) when (timeoutCancelSource.IsCancellationRequested && !cancel.IsCancellationRequested)
-                {
-                    throw new OperationCanceledException("tcp write timeout", exception);
-                }
+                // 看起来网络正常，但是数据发送不了，或者发送超级慢，或者干脆服务器坏了，这就需要超时设置了
+                // 这个任务完成，只表示数据交给了操作系统，并不是表示数据已经成功发送出去了
+                await sslStream.WriteAsync(buffer, offset, count, linkedCancelSource.Token);
             }
-            else
+            catch (OperationCanceledException exception) when (timeoutCancelSource.IsCancellationRequested && !cancel.IsCancellationRequested)
             {
-                await sslStream.WriteAsync(buffer, offset, count, cancel);
+                throw new TimeoutException("WriteTimeout", exception);
             }
         }
 
+        private bool disposed;
+        private object selflock = new();
         public void Dispose()
         {
-            if (tcpClient == null)
+            lock (selflock)
             {
-                return;
-            }
+                if (disposed)
+                    return;
+                disposed = true;
 
-            try
-            {
-                // 这里会操作系统会通知服务器断开连接
-                tcpClient.Dispose();
-                sslStream?.Dispose();
-            }
-            catch (Exception exception)
-            {
-                Debug.LogError(exception);
-            }
-            finally
-            {
-                tcpClient = null;
-                ClientIPEndPoint = null;
+                try
+                {
+                    tcpClient?.Dispose(); // 先中断底层网络读取
+                    tcpClient = null;
+                }
+                finally
+                {
+                    sslStream?.Dispose();
+                    ClientIPEndPoint = null;
+                }
             }
         }
 
         private TcpClient tcpClient;
         private NetClientConfig config;
+        private bool inited = false;
         public void Init(NetClientConfig config)
         {
+            if (disposed)
+                throw new ObjectDisposedException(nameof(ENetSimpleClient));
+            if (inited)
+                return;
             this.config = config;
             tcpClient = new TcpClient();
+            inited = true;
         }
 
         public async Task<int> Receive(byte[] buffer, int offset, int count, CancellationToken cancel)
         {
+            if (disposed)
+                throw new ObjectDisposedException(nameof(ENetSimpleClient));
+            if (!inited)
+                throw new Exception("not inited");
             if (buffer == null)
             {
                 throw new ArgumentNullException(nameof(buffer));
@@ -174,29 +193,26 @@ namespace DeathKnight.Net
                 throw new InvalidOperationException("TCP client is not initialized or has been disconnected.");
             }
 
-            if (config.ReceiveTimeout > 0)
+            using CancellationTokenSource timeoutCancelSource = new CancellationTokenSource();
+            timeoutCancelSource.CancelAfter(config.ReceiveTimeout);
+            timeoutCancelSource.Token.Register(() =>
             {
-                using CancellationTokenSource timeoutCancelSource = new CancellationTokenSource();
-                timeoutCancelSource.CancelAfter(config.ReceiveTimeout);
-                using CancellationTokenSource linkedCancelSource = CancellationTokenSource.CreateLinkedTokenSource(timeoutCancelSource.Token, cancel);
+                this.Dispose();
+            });
+            using CancellationTokenSource linkedCancelSource = CancellationTokenSource.CreateLinkedTokenSource(timeoutCancelSource.Token, cancel);
 
-                try
-                {
-                    // 不会停下这个任务，除非一下情况发生
-                    // 1、收到了至少一个字节
-                    // 2、主动关闭了连接
-                    // 3、发生网络错误
-                    // 网络看起来正常，但是接收不到网络数据，或者接收速度很慢，或者服务器坏了，这就需要超时设置
-                    return await sslStream.ReadAsync(buffer, offset, count, linkedCancelSource.Token);
-                }
-                catch (OperationCanceledException exception) when (timeoutCancelSource.IsCancellationRequested && !cancel.IsCancellationRequested)
-                {
-                    throw new TimeoutException("tcp receive timed out", exception);
-                }
-            }
-            else
+            try
             {
-                return await sslStream.ReadAsync(buffer, offset, count, cancel);
+                // 不会停下这个任务，除非一下情况发生
+                // 1、收到了至少一个字节
+                // 2、主动关闭了连接
+                // 3、发生网络错误
+                // 网络看起来正常，但是接收不到网络数据，或者接收速度很慢，或者服务器坏了，这就需要超时设置
+                return await sslStream.ReadAsync(buffer, offset, count, linkedCancelSource.Token);
+            }
+            catch (OperationCanceledException exception) when (timeoutCancelSource.IsCancellationRequested && !cancel.IsCancellationRequested)
+            {
+                throw new TimeoutException("ReceiveTimeout", exception);
             }
         }
     }

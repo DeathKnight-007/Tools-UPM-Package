@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -34,16 +35,15 @@ namespace DeathKnight.Net
         public event Action<Exception> OnConnectedFail;
         public event Action OnDisconnected;
 
-
-        private byte[] writeBuffer; // 发送帧数据缓冲池，64k之上已经可以算是大堆了，使用可以回收byte[]
-        private byte[] readBuffer; // 总接收数据缓冲池,，64k之上已经可以算是大堆了，使用可以回收byte[]
-
-        private long requestId = 0;
         private T t = new();
-        private U activeClient;
         private InvokeOnMainThreadHelper invokeHelper;
+        private bool inited = false;
         public void Init(NetClientConfig config, int frameBufferSize, ISerializer serializer)
         {
+            if (disposed)
+                throw new ObjectDisposedException(nameof(ENetSimpleClient));
+            if (inited)
+                return;
             if (frameBufferSize <= t.HeaderLength)
             {
                 throw new ArgumentOutOfRangeException(
@@ -64,25 +64,36 @@ namespace DeathKnight.Net
             this.FrameBufferSize = frameBufferSize;
             this.Config = config;
             invokeHelper = new();
+            inited = true;
         }
 
-        enum Progress
-        {
-            None = 0,     // 没开始呢
-            Doing = 1 << 1,    // 正在干
-            Completed = 1 << 2, // 结束了
-            Error = 1 << 3,     // 出错了
-        }
+
+        #region 连接
         enum ConnectedState
         {
             None = 0,
             SendConnected = 1 << 1,
             ReceiveConnected = 1 << 2,
         }
-        #region 连接
-        private Progress connectProgress = Progress.None;
+
+        private Task connectTask, sendTask, receiveTask;
         private ConnectedState realConnectedState = ConnectedState.None; // 实际连接状态
-        private ConnectedState requestConnectedState = ConnectedState.None; // 请求连接状态，实际可能还没有成这个状态呢
+        private CancellationTokenSource connectCancellSource;
+        private U activeClient;
+
+        private void ClearConnectedState(ConnectedState state)
+        {
+            if (realConnectedState.HasFlag(state))
+                realConnectedState -= state;
+        }
+
+        private void SetConnectedState(ConnectedState state)
+        {
+            if (!realConnectedState.HasFlag(state))
+            {
+                realConnectedState = realConnectedState | state;
+            }
+        }
 
         private bool CheckCanConnect()
         {
@@ -90,146 +101,180 @@ namespace DeathKnight.Net
             {
                 return false;
             }
-            if(connectProgress == Progress.Doing)
+            if (connectting)
+                return false;
+            // 当连接任务还在进行中，则不能再连接
+            if (connectTask != null && !connectTask.IsCompleted)
             {
                 return false;
             }
+            // 如果发送任务还在进行中，则不能连接
             if (sendTask != null && !sendTask.IsCompleted)
+            {
                 return false;
+            }
+            // 如果接收任务还在进行中，则不能连接
             if (receiveTask != null && !receiveTask.IsCompleted)
+            {
                 return false;
+            }
+
             return true;
         }
-        private bool connectBlockError = false;
-        private CancellationTokenSource connectCancellSource;
+
         public async Task Connect(IPEndPoint ip)
         {
+            if (disposed)
+                throw new ObjectDisposedException(nameof(ENetSimpleClient));
+            if (!inited)
+                throw new Exception("not inited");
             if (!CheckCanConnect())
             {
                 Debug.LogError("can't connect now");
                 return;
             }
-
-            ClientIPEndPoint = null;
-            ServerIpEndPoint = null;
-
-            U client = new();
-            client.Init(Config);
-            Exception failEx = null;
-            try
-            {
-                connectCancellSource = new();
-                CancellationToken token = connectCancellSource.Token;
-                Func<Task> connect = () =>
-                {
-                    return client.Connect(ip);
-                };
-                activeClient = client;
-                await ConnectCore(connect);
-            }
-            catch (OperationCanceledException e) when (connectCancellSource.Token.IsCancellationRequested)
-            {
-                client.Dispose();
-                activeClient = default(U);
-                connectProgress = Progress.Completed;
-                failEx = e;
-            }
-            catch (Exception e)
-            {
-                client.Dispose();
-                activeClient = default(U);
-                connectProgress = Progress.Error;
-                if (!connectBlockError)
-                {
-                    Debug.LogException(e);
-                }
-                failEx = e;
-            }
-            finally
-            {
-                connectCancellSource?.Dispose();
-                connectCancellSource = null;
-            }
-            if (failEx != null && realConnectedState == ConnectedState.None)
-                invokeHelper.InvokeOnMainThreadPost<Exception>((ex) => { OnConnectedFail?.Invoke(ex); }, failEx);
+            // 异步:连接过程，资源控制全部都在异步线程之内
+            // 异步之后主线程同步执行: 连接状态设定、事件抛出
+            await ConnectHelp(0, ip: ip);
         }
 
         public async Task Connect(string host, int port)
         {
+            if (disposed)
+                throw new ObjectDisposedException(nameof(ENetSimpleClient));
+            if (!inited)
+                throw new Exception("not inited");
             if (!CheckCanConnect())
             {
                 Debug.LogError("can't connect now");
                 return;
             }
+            // 异步:连接过程，资源控制全部都在异步线程之内
+            // 异步之后主线程同步执行: 连接状态设定、事件抛出
+            await ConnectHelp(1, host: host, port:port);
+        }
 
-            ClientIPEndPoint = null;
+        private bool connectting;
+        /// <summary>
+        /// type = 0 则用ip方式连接， type = 1 则使用域名方式连接
+        /// 异步:连接过程，资源控制
+        /// 异步之后主线程同步执行: 连接状态设定、事件抛出
+        /// </summary>
+        /// <returns></returns>
+        private async Task ConnectHelp(int type = 0, IPEndPoint ip = null, string host = "", int port = 0)
+        {
+            if (!CheckCanConnect())
+            {
+                Debug.LogError("can't connect now");
+                return;
+            }
+            connectting = true;
             ServerIpEndPoint = null;
+            Exception error = null;
+            U client = default(U);
 
-            U client = new();
-            client.Init(Config);
-            Exception failEx = null;
             try
             {
+                client = new();
+                activeClient = client;
+                client.Init(Config);
                 connectCancellSource = new();
                 CancellationToken token = connectCancellSource.Token;
-                Func<Task> connect = () =>
+
+                try
                 {
-                    return client.Connect(host, port);
-                };
-                activeClient = client;
-                await ConnectCore(connect);
-            }
-            catch(Exception e)
-            {
-                client.Dispose();
-                activeClient = default(U);
-                connectProgress = Progress.Error;
-                if (!connectBlockError)
-                {
-                    Debug.LogException(e);
-                    failEx = e;
+                    if (type == 0)
+                    {
+                        connectTask = client.Connect(ip);
+                        await connectTask; // 真正异步在这里
+                    }
+                    else if (type == 1)
+                    {
+                        connectTask = client.Connect(host, port);
+                        await connectTask; // 真正异步在这里
+                    }
+                    else
+                    {
+                        throw new Exception();
+                    }
+                }catch(Exception) when(token.IsCancellationRequested){
+                    token.ThrowIfCancellationRequested();// 使用cancel + client.close 强行终止连接，并抛出取消事件
                 }
+
+                token.ThrowIfCancellationRequested();
+
+                SetConnectedState(ConnectedState.SendConnected);
+                SetConnectedState(ConnectedState.ReceiveConnected);
+
+                ServerIpEndPoint = activeClient.ServerIpEndPoint;
+                ClientIPEndPoint = activeClient.ClientIPEndPoint;
+
+                _ = StartSendLoopAsync();
+                _ = StartReceiveLoopAsync();
+            }
+            catch (OperationCanceledException) when (connectCancellSource.Token.IsCancellationRequested)
+            {
+                client?.Dispose();
+                activeClient = default(U);
+            }
+            catch (Exception e)
+            {
+                client?.Dispose();
+                activeClient = default(U);
+                Debug.LogException(e);
+                error = e;
             }
             finally
             {
                 connectCancellSource?.Dispose();
                 connectCancellSource = null;
+                connectting = false;
             }
-            if (failEx != null && realConnectedState == ConnectedState.None)
-                invokeHelper.InvokeOnMainThreadPost<Exception>((ex) => { OnConnectedFail?.Invoke(ex); }, failEx);
+            if (realConnectedState.HasFlag(ConnectedState.SendConnected) && realConnectedState.HasFlag(ConnectedState.ReceiveConnected))
+            {
+                try
+                {
+                    OnConnected?.Invoke();
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+            }
+            if (error != null)
+            {
+                try
+                {
+                    OnConnectedFail?.Invoke(error);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+            }
         }
 
-        private Task sendTask, receiveTask;
-        private async Task ConnectCore(Func<Task> connect)
-        {
-            connectBlockError = false;
-            connectProgress = Progress.Doing;
-            await connect();
-            connectProgress = Progress.Completed;
-
-            if (connectCancellSource.Token.IsCancellationRequested)
-            {
-                throw new OperationCanceledException();
-            }
-
-            if (activeClient == null)
-            {
-                return;
-            }
-
-            realConnectedState = ConnectedState.SendConnected | ConnectedState.ReceiveConnected;
-            requestConnectedState = ConnectedState.SendConnected | ConnectedState.ReceiveConnected;
-
-            ClientIPEndPoint = activeClient.ClientIPEndPoint;
-            ServerIpEndPoint = activeClient.ServerIpEndPoint;
-
-            sendTask = StartSendLoopAsync();
-            receiveTask = StartReceiveLoopAsync();
-
-            invokeHelper.InvokeOnMainThreadPost(OnConnected);
-        }
         #endregion
         #region 发送过程
+        private byte[] writeBuffer; // 发送帧数据缓冲池，64k之上已经可以算是大堆了，使用可以回收byte[]
+        private long requestId = 0;
+        private ConcurrentQueue<(T Header, object Value)> messageQueue = new();
+        private SemaphoreSlim sendSignal;
+        private CancellationTokenSource sendCancelTokenSource;
+        public void Send<M>(M data, T header)
+        {
+            if (realConnectedState.HasFlag(ConnectedState.SendConnected))
+            {
+                messageQueue.Enqueue((header, data));
+                sendSignal.Release();
+            }
+            else
+            {
+                Debug.LogError($"send has closed:{header.ToString()}");
+                return;
+            }
+        }
+
         /// <summary>
         /// 发送队列里的一个消息
         /// </summary>
@@ -249,6 +294,7 @@ namespace DeathKnight.Net
             if (!header.FragmentInfo.NeedFragment)
             {
                 int count = bytesObjectTransfer.ParseObjectToBytes(target, writeBuffer, t.HeaderLength);
+                token.ThrowIfCancellationRequested();
                 if (count > FrameBufferSize - t.HeaderLength)
                 {
                     throw new InvalidDataException("Payload exceeds frame size; enable fragmentation.");
@@ -258,37 +304,28 @@ namespace DeathKnight.Net
                 header.Timestamp = Environment.TickCount;// 操作系统启动到现在经过的毫秒数
                 header.PayloadLength = count;
                 bytesObjectTransfer.ParseHeaderToBytes(header, writeBuffer, 0);
+                token.ThrowIfCancellationRequested();
                 await activeClient.Send(writeBuffer, 0, count + t.HeaderLength, token);
                 requestId++;
             }
             else
             {
                 bytesObjectTransfer.ParseObjectToBytesFragment(target, header);
+                token.ThrowIfCancellationRequested();
                 bool hasNext = true;
                 while (hasNext)
                 {
                     header.RequestId = requestId;
                     header.Timestamp = Environment.TickCount;// 操作系统启动到现在经过的毫秒数
                     hasNext = bytesObjectTransfer.ParseObjectToBytesFragmentNext(target, header, writeBuffer);
+                    token.ThrowIfCancellationRequested();
                     await activeClient.Send(writeBuffer, 0, header.PayloadLength + t.HeaderLength, token);
                     requestId++;
                 }
             }
+            token.ThrowIfCancellationRequested();
         }
 
-
-
-        private bool BlockSendError = false;
-        private CancellationTokenSource sendCancelTokenSource;
-        private async Task SendLoopAsync()
-        {
-            CancellationToken token = sendCancelTokenSource.Token;
-            while (true)
-            {
-                await sendSignal.WaitAsync(token);
-                await SendQueueOnce(token);
-            }
-        }
         #endregion
         #region 发送循环
         private void SendLoopAsyncPrepare()
@@ -303,7 +340,7 @@ namespace DeathKnight.Net
             // 取消token
             sendCancelTokenSource = new();
             //
-            BlockSendError = false;
+            messageQueue.Clear();
         }
         private void SendLoopAsyncDispose()
         {
@@ -319,73 +356,87 @@ namespace DeathKnight.Net
             //
             sendCancelTokenSource?.Dispose();
             sendCancelTokenSource = null;
+            //
+            messageQueue.Clear();
         }
 
         private async Task StartSendLoopAsync()
         {
-            SendLoopAsyncPrepare();
-            CancellationToken token = sendCancelTokenSource.Token;
+            Exception error = null;
             try
             {
-                await Task.Run(() => SendLoopAsync());
+                SendLoopAsyncPrepare();
+                CancellationToken token = sendCancelTokenSource.Token;
+                sendTask = Task.Run(async () =>
+                {
+                    while (true)
+                    {
+                        // 等待发送信号期间也可以打断循环
+                        sendSignal.Wait(token);
+                        // 发送间隙可以，打断发送循环
+                        if (token.IsCancellationRequested)
+                        {
+                            throw new OperationCanceledException();
+                        }
+                        await SendQueueOnce(token); // 如果主线程token取消之后确保不能再发送数据，但是需要lockenet才能彻底锁死不发送
+                    }
+                });
+                await sendTask;
             }
-            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            catch (OperationCanceledException e)
             {
-                Debug.LogWarning("send canceled");
-                Disconnect();
+                Debug.LogException(e);
             }
             catch (Exception e)
             {
-                if (!BlockSendError)
+                // 发送异常结束
+                Debug.LogException(e);
+                error = e;
+            }
+            finally
+            {
+                SendLoopAsyncDispose();
+            }
+
+            ClearConnectedState(ConnectedState.SendConnected);
+            bool alldisconnected = CheckAndReleaseSendReceiveCommonRes();
+
+            // 如果还在接收状态则，则发送FIN
+            if (realConnectedState.HasFlag(ConnectedState.ReceiveConnected))
+                DisconnectFIN();
+
+            // 发送途中报错，抛出系统外异常
+            if (error != null)
+            {
+                try
                 {
-                    // 发送异常结束
-                    Debug.LogException(e);
-                    try
-                    {
-                        // 触发发送异常回调
-                        OnSendFail?.Invoke(e);
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.LogException(ex);
-                    }
-                    Disconnect();
+                    // 触发发送异常回调
+                    OnSendFail?.Invoke(error);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
                 }
             }
-            SendLoopAsyncDispose();
+            if (alldisconnected)
+            {
+                try
+                {
+                    OnDisconnected?.Invoke();
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+            }
         }
 
-        /// <summary>
-        /// 请求结束发送循环
-        /// </summary>
-        /// <returns>是否正常关闭</returns>
-        private bool CloseSend()
-        {
-            // 如果根本没有连接，则不用关闭发送
-            if (realConnectedState.HasFlag(ConnectedState.SendConnected))
-            {
-                // 如果已经请求断开连接了，则不用关闭发送
-                if (requestConnectedState.HasFlag(ConnectedState.SendConnected))
-                {
-                    requestConnectedState -= ConnectedState.SendConnected;
-                }
-                else
-                {
-                    return false;
-                }
-            }
-            else
-            {
-                return false;
-            }
-            messageQueue.Clear();
-            sendCancelTokenSource?.Cancel();
-            return true;
-        }
         #endregion
         #region 接收过程
+        private byte[] readBuffer; // 总接收数据缓冲池,，64k之上已经可以算是大堆了，使用可以回收byte[]
         private int availableStart = 0, availableEnd = 0;
         private ParseBytesObject<T> bytesObjectTransfer;
+        private CancellationTokenSource receiveCancelTokenSource;
         private async Task ReceiveOnce(CancellationToken token)
         {
             if (availableEnd >= FrameBufferSize) // 如果已经读满了整理一下
@@ -411,7 +462,7 @@ namespace DeathKnight.Net
             }
             if (count == 0)
             {
-                throw new EndOfStreamException("server fin");
+                throw new EndOfStreamException("FIN");
             }
             availableEnd += count;
         }
@@ -436,8 +487,7 @@ namespace DeathKnight.Net
                     }
                     if (item.Header.PayloadLength > FrameBufferSize - t.HeaderLength || header.PayloadLength < 0)
                     {
-                        throw new InvalidDataException(
-                            $"Invalid payload length: {item.Header.PayloadLength}");
+                        throw new InvalidDataException( $"Invalid payload length: {item.Header.PayloadLength}");
                     }
                     break;
                 }
@@ -461,7 +511,9 @@ namespace DeathKnight.Net
             }
             else
             {
-                T header = null;
+                // 保存分片的第一个消息头
+                T firstheader = item.Header;
+                T header = item.Header;
                 while (true)
                 {
                     int availableLength = availableEnd - availableStart;
@@ -487,6 +539,7 @@ namespace DeathKnight.Net
                         {
                             object result = bytesObjectTransfer.ParseObjectFromBytesFragmentFinal(header);
                             item.Value = result;
+                            item.Header = firstheader;
                             return item;
                         }
                         header = null;
@@ -499,23 +552,6 @@ namespace DeathKnight.Net
             }
         }
 
-
-
-        private CancellationTokenSource receiveCancelTokenSource;
-        private bool BlockReceiveError = false;
-        private async Task ReceiveLoopAsync()
-        {
-            CancellationToken token = receiveCancelTokenSource.Token;
-            // 重置接收区间
-            availableStart = 0;
-            availableEnd = 0;
-            //
-            while (true)
-            {
-                (T, object) result = await Receive(token);
-                invokeHelper.InvokeOnMainThreadPost<(T, object)>(OnReceivedObject, result);
-            }
-        }
         #endregion
         #region 接收循环
 
@@ -530,8 +566,6 @@ namespace DeathKnight.Net
             {
                 bytesObjectTransfer = new ParseBytesObject<T>(Serializer, FrameBufferSize);
             }
-            //
-            BlockReceiveError = false;
         }
 
         private void ReceiveLoopAsyncDispose()
@@ -547,68 +581,111 @@ namespace DeathKnight.Net
             receiveCancelTokenSource = null;
         }
 
+        private bool receiveRuning = false;
         private async Task StartReceiveLoopAsync()
         {
-            ReceiveLoopAsyncPrepare();
-            CancellationToken token = receiveCancelTokenSource.Token;
+            Exception error = null;
             try
             {
-                await Task.Run(() => ReceiveLoopAsync());
-            }
-            catch (EndOfStreamException)
-            {
-                if (realConnectedState.HasFlag(ConnectedState.ReceiveConnected))
+                receiveRuning = true;
+                ReceiveLoopAsyncPrepare();
+                CancellationToken token = receiveCancelTokenSource.Token;
+                receiveTask = Task.Run(async () =>
                 {
-                    // 如果已经请求断开连接了，则不用关闭接收
-                    if (requestConnectedState.HasFlag(ConnectedState.ReceiveConnected))
+                    // 重置接收区间
+                    availableStart = 0;
+                    availableEnd = 0;
+                    //
+                    while (true)
                     {
-                        requestConnectedState -= ConnectedState.ReceiveConnected;
+                        (T, object) result = await Receive(token);
+                        invokeHelper.InvokeOnMainThreadPost<(T, object)>(OnReceivedObject, result);
                     }
-                }
-                if (requestConnectedState == ConnectedState.None)
-                {
-                    _ = OnDisconnectedHelp();
-                }
-                else
-                {
-                    Disconnect();
-                }
+                });
+                await receiveTask;
+            }
+            catch (EndOfStreamException e) when(e.Message == "FIN")
+            {
+                Debug.LogException(e);
+            }
+            catch (OperationCanceledException e)
+            {
+                Debug.LogException(e);
             }
             catch (Exception e)
             {
-                if (!BlockReceiveError)
-                {
-                    Debug.LogException(e);
-                    try
-                    {
-                        OnReceivedFail?.Invoke(e);
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.LogException(ex);
-                    }
-                    if (realConnectedState.HasFlag(ConnectedState.ReceiveConnected))
-                    {
-                        // 如果已经请求断开连接了，则不用关闭接收
-                        if (requestConnectedState.HasFlag(ConnectedState.ReceiveConnected))
-                        {
-                            requestConnectedState -= ConnectedState.ReceiveConnected;
-                        }
-                    }
-                    if (requestConnectedState == ConnectedState.None)
-                    {
-                        _ = OnDisconnectedHelp();
-                    }
-                    else
-                    {
-                        Disconnect();
-                    }
-                }
-                // 强行dispose的就不用发送FIN了
+                Debug.LogException(e);
+                error = e;
             }
-            ReceiveLoopAsyncDispose();
+            finally
+            {
+                ReceiveLoopAsyncDispose();
+            }
+            ClearConnectedState(ConnectedState.ReceiveConnected);
+            bool alldisconnected = CheckAndReleaseSendReceiveCommonRes();
+            // 主动断开连接
+            if (realConnectedState.HasFlag(ConnectedState.SendConnected))
+                sendCancelTokenSource.Cancel();
+            receiveRuning = false;
+            if (error != null)
+            {
+                try
+                {
+                    // 触发发送异常回调
+                    OnReceivedFail?.Invoke(error);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+            }
+            if (alldisconnected)
+            {
+                try
+                {
+                    OnDisconnected?.Invoke();
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+            }
         }
         #endregion
+
+        private void DisconnectFIN()
+        {
+
+            // 发送FIN
+            try
+            {
+                activeClient.Disconnect();
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+            }
+        }
+
+        private bool CheckAndReleaseSendReceiveCommonRes()
+        {
+            if (realConnectedState == ConnectedState.None)
+            {
+                try
+                {
+                    bytesObjectTransfer?.Dispose();
+                    bytesObjectTransfer = null;
+                    activeClient?.Dispose();
+                    activeClient = default(U);
+                }
+                catch (Exception e)
+                {
+                    Debug.LogException(e);
+                }
+                return true;
+            }
+            return false;
+        }
 
         /// <summary>
         /// 请求终止发送线程，发送FIN,  等待真的完成断开连接（收发线程都终止，连接也彻底断开）
@@ -616,122 +693,40 @@ namespace DeathKnight.Net
         /// <exception cref="Exception"></exception>
         public void Disconnect()
         {
-            //还正在连接
-            if(connectProgress == Progress.Doing)
+            if (disposed)
+                throw new ObjectDisposedException(nameof(ENetSimpleClient));
+            if (!inited)
+                throw new Exception("not inited");
+            // 如果正在连接，则取消连接
+            if (connectting)
             {
-                Debug.LogError("net is connecting, can't disconnect");
-                return;
-            }
-            if (CloseSend())
-            {
-                // 发送FIN
-                try
-                {
-                    activeClient.Disconnect();
-                }
-                catch (Exception e)
-                {
-                    Debug.LogException(e);
-                }
-            }
-            // 如果双端都请求了断开连接，则开始等待真的断开连接进行
-            if (requestConnectedState == ConnectedState.None)
-            {
-                if (realConnectedState != ConnectedState.None)
-                    _ = OnDisconnectedHelp();
-            }
-        }
-
-        private bool disconnectedHelpDoing;
-        private async Task OnDisconnectedHelp()
-        {
-            if (realConnectedState == ConnectedState.None)
-                return;
-            if (disconnectedHelpDoing)
-                return;
-            disconnectedHelpDoing = true;
-            await Task.WhenAll(sendTask, receiveTask);
-            try
-            {
-                bytesObjectTransfer?.Dispose();
-                bytesObjectTransfer = null;
+                connectCancellSource.Cancel();
                 activeClient?.Dispose();
-                activeClient = default(U);
-
             }
-            catch (Exception e)
+            else if (realConnectedState.HasFlag(ConnectedState.SendConnected))
             {
-                Debug.LogException(e);
-            }
-            finally
-            {
-                realConnectedState = ConnectedState.None;
-                disconnectedHelpDoing = false;
-            }
-            try
-            {
-                OnDisconnected?.Invoke();
-            }
-            catch (Exception e)
-            {
-                Debug.LogException(e);
+                sendCancelTokenSource.Cancel();
             }
         }
+
+        // 进入释放流程
+        private bool disposed = false;
         public void Dispose()
         {
-            // 如果有正在连接的情况，终止正在连接过程
-            connectCancellSource?.Cancel();
-            // 请求终止发送异步操作，保证能够终止发送线程
-            BlockSendError = true;
-            BlockReceiveError = true;
-            messageQueue.Clear();
-            bytesObjectTransfer?.Dispose();
-            bytesObjectTransfer = null;
-            sendSignal?.Release();
+            if (disposed)
+                return;
+            disposed = true;
+            if (realConnectedState.HasFlag(ConnectedState.SendConnected))
+                DisconnectFIN(); // 发送FIN
+
+            // 如果正在连接，则取消连接
+            if (connectting)
+            {
+                connectCancellSource.Cancel();
+                activeClient?.Dispose();
+            }
             sendCancelTokenSource?.Cancel();
             receiveCancelTokenSource?.Cancel();
-            if (activeClient != null)
-            {
-                connectBlockError = true;
-                try
-                {
-                    activeClient.Dispose();
-                }
-                catch (Exception e)
-                {
-                    Debug.LogException(e);
-                }
-                activeClient = default(U);
-            }
-            if (realConnectedState != ConnectedState.None)
-            {
-                try
-                {
-                    OnDisconnected?.Invoke();
-                }catch(Exception e)
-                {
-                    Debug.LogException(e);
-                }
-            }
-            realConnectedState = ConnectedState.None;
-            requestConnectedState = ConnectedState.None;
-        }
-
-        private ConcurrentQueue<(T Header, object Value)> messageQueue = new();
-        private SemaphoreSlim sendSignal;
-        public void Send<M>(M data, T header)
-        {
-            if (realConnectedState.HasFlag(ConnectedState.SendConnected) && requestConnectedState.HasFlag(ConnectedState.SendConnected))
-            {
-                messageQueue.Enqueue((header, data));
-                sendSignal.Release();
-            }
-            else
-            {
-                Debug.LogError($"send has closed:{header.ToString()}");
-                return;
-            }
-
         }
     }
 }

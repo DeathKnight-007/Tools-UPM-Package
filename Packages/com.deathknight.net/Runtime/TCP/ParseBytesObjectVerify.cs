@@ -107,67 +107,139 @@ namespace DeathKnight.Net
             return Serializer.Deserialize(objectType, buffer, offset, count);
         }
 
+        private T firstHeader;
+        private bool fragmentParsing = false;
         public bool ParseObjectFromBytesFragmentNext(T header, byte[] buffer, int offset, int count)
         {
-            if (header.FragmentInfo.Index <= 0 || header.FragmentInfo.Index > header.FragmentInfo.TotalCount)
+            try
             {
-                throw new InvalidDataException("Invalid fragment metadata.");
-            }
-            if (!header.ValidHash(buffer, offset))
-            {
-                throw new Exception("not valid");
-            }
-            if (!bigFrames.ContainsKey(header.FragmentInfo.FragmentId))
-            {
-                // 切片必须依序到达
-                if (header.FragmentInfo.Index != 1)
+                if (!header.FragmentInfo.NeedFragment)
                 {
-                    throw new Exception("fragment index error 1");
+                    throw new Exception("fragments header 标识不需要分片");
                 }
-                MemoryStream mstream;
-                if (!bigBuffers.TryPop(out mstream))
+                if (header.FragmentInfo.TotalCount > header.FragmentMax)
                 {
-                    mstream = new MemoryStream();
-                    mstream.Capacity = FrameBufferSize * 2;
+                    throw new ArgumentException("fragment total count 大于 header.FragmentMax");
                 }
-                bigFrames.Add(header.FragmentInfo.FragmentId, mstream);
-                bigFramesIndexProgress.Add(header.FragmentInfo.FragmentId, 1);
-            }
-            else
-            {
-                if (header.FragmentInfo.Index != bigFramesIndexProgress[header.FragmentInfo.FragmentId] + 1)
+                if (header.FragmentInfo.Index <= 0 || header.FragmentInfo.Index > header.FragmentInfo.TotalCount)
                 {
-                    throw new Exception("fragment index error:" + header.FragmentInfo.Index);
+                    throw new InvalidDataException("Invalid fragment metadata.");
                 }
-                bigFramesIndexProgress[header.FragmentInfo.FragmentId]++;
+                if (!fragmentParsing)
+                {
+                    firstHeader = header;
+                    fragmentParsing = true;
+                }
+                else
+                {
+                    if (header.FragmentInfo.FragmentId != firstHeader.FragmentInfo.FragmentId ||
+                        header.FragmentInfo.NeedFragment != firstHeader.FragmentInfo.NeedFragment ||
+                         header.FragmentInfo.TotalCount != firstHeader.FragmentInfo.TotalCount ||
+                         header.MessageType != firstHeader.MessageType
+                        )
+                    {
+                        throw new Exception("后续来的fragement不符合预期");
+                    }
+                }
+                if (!header.ValidHash(buffer, offset - header.HeaderLength))
+                {
+                    throw new Exception("not valid");
+                }
+                if (!bigFrames.ContainsKey(header.FragmentInfo.FragmentId))
+                {
+                    // 切片必须依序到达
+                    if (header.FragmentInfo.Index != 1)
+                    {
+                        throw new Exception("fragment index error 1");
+                    }
+                    MemoryStream mstream;
+                    if (!bigBuffers.TryPop(out mstream))
+                    {
+                        mstream = new MemoryStream();
+                        mstream.Capacity = FrameBufferSize * 2;
+                    }
+                    bigFrames.Add(header.FragmentInfo.FragmentId, mstream);
+                    bigFramesIndexProgress.Add(header.FragmentInfo.FragmentId, 1);
+                }
+                else
+                {
+                    if (header.FragmentInfo.Index != bigFramesIndexProgress[header.FragmentInfo.FragmentId] + 1)
+                    {
+                        throw new Exception("fragment index error:" + header.FragmentInfo.Index);
+                    }
+                    bigFramesIndexProgress[header.FragmentInfo.FragmentId]++;
+                }
+                MemoryStream getstream = bigFrames[header.FragmentInfo.FragmentId];
+                getstream.Write(buffer, offset, count);
+                if (header.FragmentInfo.Index == header.FragmentInfo.TotalCount)
+                {
+                    return true;
+                }
+                else
+                {
+                    return false;
+                }
             }
-            MemoryStream getstream = bigFrames[header.FragmentInfo.FragmentId];
-            getstream.Write(buffer, offset, count);
-            if (header.FragmentInfo.Index == header.FragmentInfo.TotalCount)
+            catch
             {
-                return true;
+                if (firstHeader != null)
+                {
+                    DisposeFragmentStream(firstHeader.FragmentInfo.FragmentId);
+                }
+                DisposeFragmentStream(header.FragmentInfo.FragmentId);
+                throw;
             }
-            else
+        }
+
+        private void DisposeFragmentStream(long requestid)
+        {
+            MemoryStream getstream;
+            if (bigFrames.TryGetValue(requestid, out getstream))
             {
-                return false;
+                if (bigFrames.ContainsKey(requestid))
+                {
+                    bigFrames.Remove(requestid);
+                }
+                bigBuffers.Push(getstream);
+                getstream.SetLength(0);
+                getstream.Position = 0;
             }
+            if (bigFramesIndexProgress.ContainsKey(requestid))
+            {
+                bigFramesIndexProgress.Remove(requestid);
+            }
+            fragmentParsing = false;
+            firstHeader = null;
         }
 
         public object ParseObjectFromBytesFragmentFinal(T header)
         {
-            MemoryStream getstream = bigFrames[header.FragmentInfo.FragmentId];
-            Type objectType;
-            if (!BaseProto.PayloadTypes.TryGetValue(header.MessageType, out objectType))
+            try
             {
-                throw new Exception("MessageType is not registered");
+                MemoryStream getstream = bigFrames[header.FragmentInfo.FragmentId];
+                Type objectType;
+                if (!BaseProto.PayloadTypes.TryGetValue(header.MessageType, out objectType))
+                {
+                    throw new Exception("MessageType is not registered");
+                }
+                getstream.Position = 0;
+                object Value = Serializer.Deserialize(objectType, getstream);
+                if (firstHeader != null)
+                {
+                    DisposeFragmentStream(firstHeader.FragmentInfo.FragmentId);
+                }
+                DisposeFragmentStream(header.FragmentInfo.FragmentId);
+                return Value;
             }
-            getstream.Position = 0;
-            object Value = Serializer.Deserialize(objectType, getstream);
-            bigFrames.Remove(header.FragmentInfo.FragmentId);
-            bigFramesIndexProgress.Remove(header.FragmentInfo.FragmentId);
-            getstream.SetLength(0);
-            bigBuffers.Push(getstream);
-            return Value;
+            catch
+            {
+                if (firstHeader != null)
+                {
+                    DisposeFragmentStream(firstHeader.FragmentInfo.FragmentId);
+                }
+                DisposeFragmentStream(header.FragmentInfo.FragmentId);
+                throw;
+            }
         }
 
         public void Dispose()
@@ -188,32 +260,51 @@ namespace DeathKnight.Net
 
         public T ParseHeaderFromBytes(MemoryStream stream, int count)
         {
+            if (count > stream.Length - stream.Position)
+            {
+                throw new ArgumentException("尝试从不够长度的stream里取超过stream长度的数据");
+            }
             if (stream.TryGetBuffer(out var segment))
             {
                 T result = ParseHeaderFromBytes(segment.Array, segment.Offset + (int)stream.Position, count);
                 return result;
             }
-            return default(T);
+            else
+            {
+                throw new Exception("不支持 不能获取byte[]的MemoryStream");
+            }
         }
 
         public object ParseObjectFromBytes(T header, MemoryStream stream, int count)
         {
+            if (count > stream.Length - stream.Position)
+            {
+                throw new ArgumentException("尝试从不够长度的stream里取超过stream长度的数据");
+            }
             if (stream.TryGetBuffer(out var segment))
             {
-                object result = ParseObjectFromBytes(header, segment.Array, segment.Offset + (int)stream.Position, count);
-                return result;
+                return ParseObjectFromBytes(header, segment.Array, segment.Offset + (int)stream.Position, count);
             }
-            return null;
+            else
+            {
+                throw new Exception("不支持 不能获取byte[]的MemoryStream");
+            }
         }
 
         public bool ParseObjectFromBytesFragmentNext(T header, MemoryStream stream, int count)
         {
+            if (count > stream.Length - stream.Position)
+            {
+                throw new ArgumentException("尝试从不够长度的stream里取超过stream长度的数据");
+            }
             if (stream.TryGetBuffer(out var segment))
             {
-                bool result = ParseObjectFromBytesFragmentNext(header, segment.Array, segment.Offset + (int)stream.Position, count);
-                return result;
+                return ParseObjectFromBytesFragmentNext(header, segment.Array, segment.Offset + (int)stream.Position, count);
             }
-            return false;
+            else
+            {
+                throw new Exception("不支持 不能获取byte[]的MemoryStream");
+            }
         }
     }
 }

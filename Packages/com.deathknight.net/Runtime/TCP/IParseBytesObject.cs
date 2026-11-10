@@ -26,7 +26,7 @@ namespace DeathKnight.Net
         object ParseObjectFromBytes(T header, byte[] buffer, int offset, int count);
 
         /// <summary>
-        /// 将object从多个片段里解析出来，只有所有片段依序到达，才会out出value
+        /// 将object从多个片段里解析出来，只有所有片段依序到达
         /// </summary>
         /// <param name="header"></param>
         /// <param name="buffer"></param>
